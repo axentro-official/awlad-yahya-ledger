@@ -310,28 +310,70 @@ function setupPinGate(){
 
       const v = (pinInput.value || "").trim();
 
-      if(v === PIN_CODE){
-        setAuthed(true);
-        if(pinError) pinError.hidden = true;
-        pinInput.value = "";
-        pinInput.type = "password";
+      const submitBtn = pinForm.querySelector('button[type="submit"]');
 
-        openApp();
+await withButtonBusy_(submitBtn, "جاري التحقق...", async ()=>{
+  const isSheetsCfg = !!(API_CFG && API_CFG.scriptUrl);
 
-        try{
-          await STORE.init();
-        }catch(e){
-          console.error(e);
-          showGlobalError("تعذر تهيئة التخزين على الشيت. سيتم استخدام التخزين المحلي مؤقتًا.");
-        }
+  // ✅ Sheets mode: validate PIN server-side (Apps Script)
+  if(isSheetsCfg){
+    showOverlay("جاري التحقق من الـ PIN...");
+    try{
+      // If PIN wrong -> WebApp returns BAD_PIN
+      await apiCall(API_ACTIONS.init, {}, { pin: v });
 
-        await refresh(true);
+      // persist session PIN (only after success)
+      API_CFG.pin = v;
+      try{ sessionStorage.setItem("oy_pin", v); }catch(_){}
 
-      } else {
-        if(pinError) pinError.hidden = false;
-        pinInput.focus();
-        pinInput.select();
+      setAuthed(true);
+      if(pinError) pinError.hidden = true;
+      pinInput.value = "";
+      pinInput.type = "password";
+
+      openApp();
+
+      try{ await STORE.init(); }
+      catch(e){
+        console.error(e);
+        showGlobalError("تعذر تهيئة التخزين على الشيت. سيتم استخدام التخزين المحلي مؤقتًا.");
       }
+
+      await refresh(true);
+      return;
+    }catch(e){
+      console.error(e);
+      if(pinError) pinError.hidden = false;
+      pinInput.focus();
+      pinInput.select();
+      return;
+    }finally{
+      hideOverlay();
+    }
+  }
+
+  // ✅ Local mode: fallback PIN check (لا يوجد سيرفر)
+  if(v === PIN_CODE){
+    setAuthed(true);
+    if(pinError) pinError.hidden = true;
+    pinInput.value = "";
+    pinInput.type = "password";
+
+    openApp();
+
+    try{ await STORE.init(); }
+    catch(e){
+      console.error(e);
+      showGlobalError("تعذر تهيئة التخزين. سيتم استخدام التخزين المحلي.");
+    }
+
+    await refresh(true);
+  } else {
+    if(pinError) pinError.hidden = false;
+    pinInput.focus();
+    pinInput.select();
+  }
+});      }
     });
   }
 }
@@ -492,15 +534,25 @@ const API_ACTIONS = {
   deleteEntry: "deleteEntry",
   deletePayment: "deletePayment",
   getTrash: "getTrash",
+  restoreTrash: "restoreTrash",
   deleteTrashLog: "deleteTrashLog"
 };
 
 /* ✅✅✅ FIX CORS: GET ONLY (بدون preflight) */
-async function apiCall(action, payload = {}){
+/* ===================== API Helper (Sheets Mode) ===================== */
+/**
+ * Robust GET client:
+ * - First try fetch() with timeout
+ * - If CORS/network blocks, fallback to JSONP (?callback=...)
+ * Notes:
+ * - WebApp supports JSONP already (code.gs)
+ * - We keep requests GET-only to avoid preflight
+ */
+async function apiCall(action, payload = {}, opts = {}){
   if(!API_CFG?.scriptUrl) throw new Error("NO_SCRIPT_URL");
 
-  const url = API_CFG.scriptUrl;
-  const pin = String(API_CFG.pin || PIN_CODE);
+  const url = String(API_CFG.scriptUrl || "").trim();
+  const pin = String((opts.pin ?? API_CFG.pin) || "").trim(); // ✅ PIN is provided by user at runtime
 
   const qs = new URLSearchParams();
   qs.set("action", action);
@@ -508,13 +560,77 @@ async function apiCall(action, payload = {}){
   qs.set("payload", JSON.stringify(payload));
   qs.set("_ts", String(Date.now())); // cache-buster
 
+  // keep query minimal for GET
   const full = `${url}?${qs.toString()}`;
 
-  const r = await fetch(full, { method:"GET", mode:"cors" });
-  const j = await r.json();
-  if(!j || j.ok === false) throw new Error(j?.error || "API_ERROR");
-  return j;
+  // 1) fetch() with timeout
+  try{
+    const j = await fetchJsonWithTimeout_(full, { timeoutMs: 8000 });
+    if(!j || j.ok === false) throw new Error(j?.error || "API_ERROR");
+    return j;
+  }catch(fetchErr){
+    // 2) JSONP fallback (bypass CORS)
+    try{
+      const j = await jsonpWithTimeout_(full, { timeoutMs: 10000 });
+      if(!j || j.ok === false) throw new Error(j?.error || "API_ERROR");
+      return j;
+    }catch(jsonpErr){
+      // surface original error if possible
+      throw fetchErr;
+    }
+  }
 }
+
+async function fetchJsonWithTimeout_(url, { timeoutMs = 8000 } = {}){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=> ctrl.abort(), timeoutMs);
+  try{
+    const r = await fetch(url, { method:"GET", mode:"cors", signal: ctrl.signal });
+    const j = await r.json();
+    return j;
+  }finally{
+    clearTimeout(t);
+  }
+}
+
+function jsonpWithTimeout_(url, { timeoutMs = 10000 } = {}){
+  return new Promise((resolve, reject)=>{
+    const cbName = `__oy_jsonp_${Date.now()}_${Math.floor(Math.random()*1e9)}`;
+    const sep = url.includes("?") ? "&" : "?";
+    const full = `${url}${sep}callback=${encodeURIComponent(cbName)}`;
+
+    let done = false;
+    const cleanup = ()=>{
+      if(done) return;
+      done = true;
+      try{ delete window[cbName]; }catch(_){}
+      if(script && script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timer);
+    };
+
+    window[cbName] = (data)=>{
+      cleanup();
+      resolve(data);
+    };
+
+    const script = document.createElement("script");
+    script.src = full;
+    script.async = true;
+    script.onerror = ()=>{
+      cleanup();
+      reject(new Error("JSONP_ERROR"));
+    };
+
+    const timer = setTimeout(()=>{
+      cleanup();
+      reject(new Error("JSONP_TIMEOUT"));
+    }, timeoutMs);
+
+    document.head.appendChild(script);
+  });
+}
+
+
 
 class LocalStore {
   async init(){ return true; }
@@ -606,6 +722,10 @@ class SheetsStore {
     return Array.isArray(j.trash) ? j.trash : [];
   }
   async deleteTrashLog(logId){ await apiCall(API_ACTIONS.deleteTrashLog, { logId }); }
+  async restoreTrash(refTable, refId, snapshot){
+    const j = await apiCall(API_ACTIONS.restoreTrash, { refTable, refId, snapshot });
+    return j;
+  }
 }
 
 class HybridStore {
@@ -728,6 +848,19 @@ class HybridStore {
       console.error(e);
       this.mode = "local";
       await this.local.deleteTrashLog(logId);
+      throw e;
+    }
+  }
+
+  async restoreTrash(refTable, refId, snapshot){
+    if(this.mode === "local"){
+      throw new Error("UNSUPPORTED_LOCAL_RESTORE");
+    }
+    try{
+      return await this.sheets.restoreTrash(refTable, refId, snapshot);
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
       throw e;
     }
   }
@@ -1351,6 +1484,22 @@ async function restoreTrashLogById(logId){
   }
 
   // Restore
+  // ✅ لو شغال على Sheets: استخدم restoreTrash (Atomic) بدل إعادة إضافة صفوف متعددة
+  if(STORE && typeof STORE.restoreTrash === "function" && STORE.mode === "sheets"){
+    try{
+      const refTable = (log.type === "delete_entry") ? "Transactions" : "Payments";
+      const refId = String(log.refId || log.entrySnapshot?.id || log.paymentSnapshot?.id || "");
+      if(refId){
+        await STORE.restoreTrash(refTable, refId, { ...log });
+        await refresh(true);
+        return;
+      }
+    }catch(e){
+      console.error(e);
+      // fallback للمنطق القديم
+    }
+  }
+
   if(log.type === "delete_entry"){
     const entry = log.entrySnapshot || null;
     const pays  = Array.isArray(log.paymentsSnapshot) ? log.paymentsSnapshot : [];
@@ -1740,6 +1889,31 @@ function hideOverlay(){
   const ov = document.getElementById("loadingOverlay");
   if(!ov) return;
   ov.hidden = true;
+/* ===================== UX Helpers ===================== */
+async function withButtonBusy_(btn, busyText, fn){
+  const hasBtn = !!btn;
+  const prevDisabled = hasBtn ? btn.disabled : false;
+  const prevText = hasBtn ? btn.textContent : "";
+  try{
+    if(hasBtn){
+      btn.disabled = true;
+      if(busyText) btn.textContent = busyText;
+    }
+    return await fn();
+  }finally{
+    if(hasBtn){
+      btn.disabled = prevDisabled;
+      btn.textContent = prevText;
+    }
+  }
+}
+
+function setFormDisabled_(form, disabled){
+  if(!form) return;
+  const els = form.querySelectorAll("input, select, textarea, button");
+  els.forEach(el => { el.disabled = !!disabled; });
+}
+
 }
 
 /* ✅ ضمان إن الأوفرلاي ينتهي بعد آخر Render/Paint فعلي */
@@ -1893,6 +2067,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if(isAuthed()){
       document.documentElement.classList.add("authed");
+
+try{
+  const sp = sessionStorage.getItem("oy_pin");
+  if(sp && API_CFG) API_CFG.pin = sp;
+}catch(_){}
+
       openApp();
 
       try{ await STORE.init(); }
@@ -1932,42 +2112,47 @@ document.addEventListener("DOMContentLoaded", async () => {
       ev.preventDefault();
       hideGlobalError();
 
-      const { entry, firstPay } = getEntryFromForm();
-      const err = validateEntry(entry);
-      if(err){ alert(err); return; }
+      const form = ev.currentTarget;
+      const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
 
-      if(firstPay !== null && firstPay > entry.total){
-        alert("الدفعة الأولى لا يمكن أن تتجاوز الإجمالي.");
-        return;
-      }
+      await withButtonBusy_(submitBtn, "جاري الحفظ...", async ()=>{
+        const { entry, firstPay } = getEntryFromForm();
+        const err = validateEntry(entry);
+        if(err){ alert(err); return; }
 
-      try{
-        await STORE.addEntry(entry);
-
-        if(firstPay !== null && entry.type !== "expense"){
-          const side = moneySide(entry.type);
-          const flow = (side === "receivable") ? "in" : "out";
-
-          await STORE.addPayment({
-            id: uid(),
-            entryId: entry.id,
-            date: entry.date,
-            party: entry.party,
-            amount: firstPay,
-            note: "دفعة أولى",
-            flow,
-            createdAt: Date.now()
-          });
+        if(firstPay !== null && firstPay > entry.total){
+          alert("الدفعة الأولى لا يمكن أن تتجاوز الإجمالي.");
+          return;
         }
 
-        resetForm();
-        await refresh(true);
+        try{
+          await STORE.addEntry(entry);
 
-      }catch(e){
-        console.error(e);
-        showGlobalError("تعذر حفظ العملية على الشيت. تم الحفظ محليًا إذا كان الوضع Offline.");
-        requestRender();
-      }
+          if(firstPay !== null && entry.type !== "expense"){
+            const side = moneySide(entry.type);
+            const flow = (side === "receivable") ? "in" : "out";
+
+            await STORE.addPayment({
+              id: uid(),
+              entryId: entry.id,
+              date: entry.date,
+              party: entry.party,
+              amount: firstPay,
+              note: "دفعة أولى",
+              flow,
+              createdAt: Date.now()
+            });
+          }
+
+          resetForm();
+          await refresh(true);
+
+        }catch(e){
+          console.error(e);
+          showGlobalError("تعذر حفظ العملية على الشيت. تم الحفظ محليًا إذا كان الوضع Offline.");
+          requestRender();
+        }
+      });
     });
 
     el("btnReset")?.addEventListener("click", resetForm);
@@ -2004,21 +2189,24 @@ document.addEventListener("DOMContentLoaded", async () => {
         const okPin = await pinConfirmModalOpen("الحذف");
         if(!okPin) return;
 
-        if(confirm("متأكد حذف العملية؟ (سيتم حذف المدفوعات التابعة لها أيضًا)")){
-          const entry = STATE.entries.find(e => e.id === id) || null;
-          const pays = STATE.payments.filter(p => p.entryId === id);
+        await withButtonBusy_(btn, "جاري الحذف...", async ()=>{
+          if(confirm("متأكد حذف العملية؟ (سيتم حذف المدفوعات التابعة لها أيضًا)")){
+            const entry = STATE.entries.find(e => e.id === id) || null;
+            const pays = STATE.payments.filter(p => p.entryId === id);
 
-          try{
-            await STORE.deleteEntry(id, { entrySnapshot: entry, paymentsSnapshot: pays });
-          }catch(e){
-            console.error(e);
-            showGlobalError("تعذر الحذف على الشيت. تم تنفيذ الحذف محليًا إذا كان الوضع Offline.");
+            try{
+              await STORE.deleteEntry(id, { entrySnapshot: entry, paymentsSnapshot: pays });
+            }catch(e){
+              console.error(e);
+              showGlobalError("تعذر الحذف على الشيت. تم تنفيذ الحذف محليًا إذا كان الوضع Offline.");
+            }
+
+            await refresh(true);
           }
+        });
 
-          await refresh(true);
-        }
         return;
-      }
+      }      }
 
       if(act === "pay"){ openPayModal(id); return; }
       if(act === "preview"){ openEntryPreview(id); return; }
@@ -2044,53 +2232,57 @@ document.addEventListener("DOMContentLoaded", async () => {
     el("payModal")?.addEventListener("click", (ev)=>{ if(ev.target === el("payModal")) closePayModal(); });
 
     el("paySave")?.addEventListener("click", async ()=>{
-      const entry = STATE.entries.find(e => e.id === CURRENT_PAY_ENTRY_ID);
-      if(!entry) return closePayModal();
+      const btn = el("paySave");
+      await withButtonBusy_(btn, "جارِ حفظ الدفعة...", async ()=>{
 
-      if(entry.type === "expense"){
-        alert("المصروف لا يحتاج دفعات.");
-        return closePayModal();
-      }
+        const entry = STATE.entries.find(e => e.id === CURRENT_PAY_ENTRY_ID);
+        if(!entry) return closePayModal();
 
-      const date = (el("payDate")?.value || "").trim();
-      const amount = (el("payAmount")?.value === "" || el("payAmount") == null) ? null : Number(el("payAmount").value);
-      const note = (el("payNote")?.value || "").trim();
-      const flow = (el("payFlow")?.value || "out").trim();
+        if(entry.type === "expense"){
+          alert("المصروف لا يحتاج دفعات.");
+          return closePayModal();
+        }
 
-      if(!date || amount === null || !Number.isFinite(amount) || amount <= 0){
-        el("payError") && (el("payError").hidden = false);
-        return;
-      }
+        const date = (el("payDate")?.value || "").trim();
+        const amount = (el("payAmount")?.value === "" || el("payAmount") == null) ? null : Number(el("payAmount").value);
+        const note = (el("payNote")?.value || "").trim();
+        const flow = (el("payFlow")?.value || "out").trim();
 
-      const side = moneySide(entry.type);
-      const affectingFlow = (side === "receivable") ? "in" : "out";
-
-      if(flow === affectingFlow && Number.isFinite(entry.total)){
-        const alreadyAffecting = sumPaymentsForEntry(entry.id, STATE.payments, affectingFlow);
-        if((alreadyAffecting + amount) > Number(entry.total) + 1e-9){
-          alert(`لا يمكن أن تتجاوز الدفعات المؤثرة إجمالي العملية.\nالمدفوع حاليًا: ${fmt(alreadyAffecting)}\nالإجمالي: ${fmt(entry.total)}`);
+        if(!date || amount === null || !Number.isFinite(amount) || amount <= 0){
+          el("payError") && (el("payError").hidden = false);
           return;
         }
-      }
 
-      try{
-        await STORE.addPayment({
-          id: uid(),
-          entryId: entry.id,
-          date,
-          party: entry.party,
-          amount,
-          note,
-          flow: (flow === "in" ? "in" : "out"),
-          createdAt: Date.now()
-        });
-      }catch(e){
-        console.error(e);
-        showGlobalError("تعذر حفظ الدفعة على الشيت. تم الحفظ محليًا إذا كان الوضع Offline.");
-      }
+        const side = moneySide(entry.type);
+        const affectingFlow = (side === "receivable") ? "in" : "out";
 
-      closePayModal();
-      await refresh(true);
+        if(flow === affectingFlow && Number.isFinite(entry.total)){
+          const alreadyAffecting = sumPaymentsForEntry(entry.id, STATE.payments, affectingFlow);
+          if((alreadyAffecting + amount) > Number(entry.total) + 1e-9){
+            alert(`لا يمكن أن تتجاوز الدفعات المؤثرة إجمالي العملية.\nالمدفوع حاليًا: ${fmt(alreadyAffecting)}\nالإجمالي: ${fmt(entry.total)}`);
+            return;
+          }
+        }
+
+        try{
+          await STORE.addPayment({
+            id: uid(),
+            entryId: entry.id,
+            date,
+            party: entry.party,
+            amount,
+            note,
+            flow: (flow === "in" ? "in" : "out"),
+            createdAt: Date.now()
+          });
+        }catch(e){
+          console.error(e);
+          showGlobalError("تعذر حفظ الدفعة على الشيت. تم الحفظ محليًا إذا كان الوضع Offline.");
+        }
+
+        closePayModal();
+        await refresh(true);
+      });
     });
 
     // Delete payment
@@ -2103,6 +2295,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const okPin = await pinConfirmModalOpen("حذف الدفعة");
       if(!okPin) return;
 
+      await withButtonBusy_(btn, "جاري حذف الدفعة...", async ()=>{
       if(confirm("متأكد حذف الدفعة؟")){
         const pay = STATE.payments.find(p => p.id === payId) || null;
 
@@ -2114,6 +2307,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         await refresh(true);
       }
+      });
     });
 
     // Trash delete forever
@@ -2123,7 +2317,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       const restoreId = btn.dataset.trashrestore;
       if(restoreId){
-        await restoreTrashLogById(restoreId);
+        await withButtonBusy_(btn, "جاري الاسترجاع...", async ()=>{
+          await restoreTrashLogById(restoreId);
+        });
         return;
       }
 
@@ -2133,6 +2329,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const okPin = await pinConfirmModalOpen("الحذف النهائي من سجل المحذوفات");
       if(!okPin) return;
 
+      await withButtonBusy_(btn, "جاري الحذف...", async ()=>{
       if(confirm("متأكد حذف نهائي؟ لن يمكن استرجاع هذا السطر.")){
         try{
           await STORE.deleteTrashLog(delId);
@@ -2143,6 +2340,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           showGlobalError("تعذر حذف السطر من الشيت. تم الحذف محليًا إذا كان الوضع Offline.");
         }
       }
+      });
     });
 
 
