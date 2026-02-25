@@ -1,655 +1,2375 @@
-<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>سوبر ماركت أولاد يحيى — دفتر الحسابات</title>
-  <link rel="stylesheet" href="style.css" />
+/* سوبر ماركت أولاد يحيى — دفتر الحسابات
+   ✅ PIN ثابت: 1234
+   ✅ مدفوعات منفصلة payments[] مرتبطة بكل عملية entryId
+   ✅ Refresh لا يعمل Logout (sessionStorage)
+   ✅ حذف بــ PIN + سجل محذوفات (Trash)
+   ✅ كشف حساب + معاينات + طباعة/PDF
+   ✅ تقارير Reports + اتجاه المدفوعات (out/in)
 
-  <!-- ✅ Google Sheets / Apps Script Config (الأحدث) -->
-  <script>
-    window.AXENTRO_API = {
-      // ✅ ده اللينك اللي فتح معاك JSON من /exec
-      scriptUrl: "https://script.google.com/macros/s/AKfycbyrekHgMhE1XIVv72XNS4C1WScMR4suihK74RoA7OHsmtBw2eNaGtoUGx7NkysF7YzU7g/exec",
-      pin: "1234"
+   ✅ FIX (نهائي):
+   - حل CORS على اللاب: apiCall = GET فقط (بدون preflight)
+   - تسريع: البحث/الفلاتر لا تعيد تحميل الشيت — فقط Render من الكاش
+*/
+
+const LS_KEY   = "oy_ledger_v3";
+const PIN_CODE = "1234";
+
+// ✅ Normalize PIN digits (supports Arabic-Indic & Eastern Arabic-Indic digits)
+function normalizePinInput(v){
+  const s = String(v ?? "").trim();
+  if(!s) return "";
+  const map = {
+    "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
+    "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
+  };
+  return s.replace(/[٠-٩۰-۹]/g, ch => map[ch] ?? ch);
+}
+
+
+// ✅ تجهيز مستقبلي: نجاح تسجيل دخول جوجل (سيتم ربطه لاحقًا بـ Apps Script Allowlist)
+function onGoogleLoginSuccess(email){
+  try{
+    const e = String(email || "").trim().toLowerCase();
+    if(!e) return;
+    // لاحقًا: إرسال الإيميل للسيرفر + التحقق من الـ Allowlist
+    console.info("Google login (placeholder):", e);
+  }catch(_e){}
+}
+
+const AUTH_KEY = "oy_auth_v1";
+
+window.AXENTRO_API = window.AXENTRO_API || {
+  scriptUrl: "https://script.google.com/macros/s/AKfycbxg-mnc60NWXnOQjI9VurtgTpkEiwnCyjnbP5afz74h-7X3sWQipJu2oKJfb5uIa0CO/exec",
+  pin: "1234"
+};
+
+const TRASH_KEY = "oy_trash_v1";
+const MAX_TRASH = 1000;
+
+const SHOP_NAME  = "سوبر ماركت أولاد يحيى";
+const ADMIN_NAME = "إدارة هيثم";
+
+const el = (id) => document.getElementById(id);
+
+const fmt = (n) => {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
+  return x.toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+const uid = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+
+// ✅ تطبيع التاريخ القادم من الشيت (قد يكون timestamp)
+function normalizeISODate(v){
+  if(v == null) return "";
+  const s = String(v).trim();
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : s;
+}
+
+function typeLabel(t){
+  return ({
+    expense: "مصروف",
+    advance: "سُلفة",
+    credit_customer: "آجل (عميل)",
+    credit_supplier: "فاتورة/مورد"
+  })[t] || "—";
+}
+
+/* ✅ تصنيف مالي */
+function moneySide(entryType){
+  if(entryType === "expense") return "expense";
+  if(entryType === "credit_supplier") return "payable";
+  if(entryType === "credit_customer") return "receivable";
+  if(entryType === "advance") return "receivable";
+  return "other";
+}
+function sideLabel(side){
+  return ({
+    receivable: "فلوس ليا",
+    payable: "فلوس عليا",
+    expense: "مصروف"
+  })[side] || "—";
+}
+
+function escapeHtml(str){
+  return (str || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+/* -------------------- ✅ Trash Normalizer (Sheets/Local compatible) -------------------- */
+function normalizeTrashItem(it){
+  if(!it || typeof it !== "object") return null;
+
+  let obj = { ...it };
+
+  // snapshotJson (string) -> parsed object fields
+  const snapStr = obj.snapshotJson || obj.snapshotJSON || obj.snapshot;
+  if(typeof snapStr === "string" && snapStr.trim()){
+    try{
+      const parsed = JSON.parse(snapStr);
+      if(parsed && typeof parsed === "object"){
+        obj = { ...obj, ...parsed };
+      }
+    }catch(_e){}
+  }
+
+  // at: UI expects item.at; Sheets may send deletedAt
+  let at = obj.at ?? obj.deletedAt ?? obj.deleted_at ?? obj.time ?? obj.ts ?? obj.createdAt;
+  if(typeof at === "string" && /^\d+$/.test(at)) at = Number(at);
+  if(!Number.isFinite(Number(at))) at = Date.now();
+  obj.at = Number(at);
+
+  // type: UI expects delete_entry / delete_payment
+  if(!obj.type){
+    const reason = String(obj.reason || "").toLowerCase();
+    const refTbl = String(obj.refTable || "").toLowerCase();
+    if(reason.includes("entry") || reason.includes("transaction") || refTbl.includes("entries") || refTbl.includes("transactions")){
+      obj.type = "delete_entry";
+    }else if(reason.includes("payment") || refTbl.includes("payments")){
+      obj.type = "delete_payment";
+    }else{
+      // fallback
+      obj.type = (obj.entrySnapshot || obj.paymentsSnapshot) ? "delete_entry" : "delete_payment";
+    }
+  }
+
+  // id fallback
+  if(!obj.id) obj.id = obj.logId || obj.refId || `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  return obj;
+}
+function normalizeTrash(list){
+  return (Array.isArray(list) ? list : [])
+    .map(normalizeTrashItem)
+    .filter(Boolean);
+}
+/* ------------------------------------------------------------------------------ */
+
+
+/* ✅ Labels */
+function flowLabel(flow){
+  return flow === "in" ? "متحصلات داخلة" : "مدفوعات خارجة";
+}
+
+/* ✅ مجموع المدفوعات لعملية */
+function sumPaymentsForEntry(entryId, payments, flow = "all"){
+  return payments
+    .filter(p => p.entryId === entryId)
+    .filter(p => flow === "all" ? true : (p.flow === flow))
+    .reduce((a,p)=> a + Number(p.amount || 0), 0);
+}
+
+/* ✅ استبعاد الصفوف المحذوفة القادمة من الشيت (isDeleted=1) */
+function isRowDeleted(obj){
+  if(!obj || typeof obj !== "object") return false;
+  const v = obj.isDeleted ?? obj.deleted ?? obj.is_deleted ?? obj.IsDeleted ?? obj.ISDELETED;
+  if(v == null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes";
+}
+
+/* -------------------- ✅ UI Error Banner (بديل alert) -------------------- */
+function ensureGlobalBanner(){
+  if(document.getElementById("globalBanner")) return;
+
+  const box = document.createElement("div");
+  box.id = "globalBanner";
+  box.hidden = true;
+  box.style.position = "fixed";
+  box.style.left = "14px";
+  box.style.right = "14px";
+  box.style.bottom = "14px";
+  box.style.zIndex = "9999";
+  box.style.maxWidth = "900px";
+  box.style.margin = "0 auto";
+
+  box.innerHTML = `
+    <div class="error" style="display:flex; gap:10px; align-items:flex-start; justify-content:space-between;">
+      <div style="flex:1">
+        <div id="globalBannerText" style="font-weight:900; margin-bottom:6px;">—</div>
+        <div style="opacity:.9; font-size:12px">لو المشكلة مستمرة: راجع نشر الـ Web App أو جرّب بعد دقيقة.</div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="globalBannerRetry" class="btn small" type="button">إعادة المحاولة</button>
+        <button id="globalBannerClose" class="btn small ghost" type="button">إغلاق</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(box);
+
+  const btnClose = document.getElementById("globalBannerClose");
+  const btnRetry = document.getElementById("globalBannerRetry");
+  btnClose?.addEventListener("click", ()=> hideGlobalError());
+  btnRetry?.addEventListener("click", async ()=>{
+    hideGlobalError();
+    if(isAuthed()){
+      try{ await STORE.init(); }catch(_e){}
+      await refresh(true);
+    }
+  });
+}
+
+function showGlobalError(msg){
+  ensureGlobalBanner();
+  const banner = document.getElementById("globalBanner");
+  const t = document.getElementById("globalBannerText");
+  if(t) t.textContent = msg || "حدث خطأ غير متوقع.";
+  if(banner) banner.hidden = false;
+}
+function hideGlobalError(){
+  const banner = document.getElementById("globalBanner");
+  if(banner) banner.hidden = true;
+}
+
+/* -------------------- Pages -------------------- */
+const PAGES = [
+  "dashboard","records","payments","ledger",
+  "reports",
+  "entryPreview","ledgerPreview",
+  "trash"
+];
+
+function showPage(name){
+  PAGES.forEach(p=>{
+    const node = document.getElementById("page-"+p);
+    if(node) node.hidden = (p !== name);
+  });
+
+  document.querySelectorAll(".navBtn").forEach(b=>{
+    b.classList.toggle("active", b.dataset.page === name);
+  });
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+
+  if(name === "trash") renderTrash();
+  if(name === "reports") renderReports();
+}
+
+/* -------------------- Auth -------------------- */
+function setAuthed(v){
+  if(v){
+    sessionStorage.setItem(AUTH_KEY, "1");
+    document.documentElement.classList.add("authed");
+  }else{
+    sessionStorage.removeItem(AUTH_KEY);
+    document.documentElement.classList.remove("authed");
+  }
+}
+function isAuthed(){
+  return sessionStorage.getItem(AUTH_KEY) === "1";
+}
+
+function openApp(){
+  const gate = el("pinGate");
+  const root = el("appRoot");
+  const nav  = el("navBar");
+
+  if(gate){
+    gate.hidden = true;
+    gate.style.display = "none";
+  }
+  if(root) root.hidden = false;
+  if(nav) nav.hidden = false;
+
+  showPage("dashboard");
+}
+
+function closeApp(){
+  const gate = el("pinGate");
+  const root = el("appRoot");
+  const nav  = el("navBar");
+
+  if(root) root.hidden = true;
+  if(nav) nav.hidden = true;
+
+  if(gate){
+    gate.hidden = false;
+    gate.style.display = "block";
+  }
+
+  if(el("pinInput")){
+    el("pinInput").type = "password";
+    el("pinInput").value = "";
+  }
+  if(el("pinError")) el("pinError").hidden = true;
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+/* -------------------- PIN Gate -------------------- */
+function setupPinGate(){
+  const pinForm  = el("pinForm");
+  const pinInput = el("pinInput");
+  const pinError = el("pinError");
+  const toggle   = el("pinToggle");
+
+  if(toggle && pinInput){
+    toggle.addEventListener("click", ()=>{
+      pinInput.type = (pinInput.type === "password") ? "text" : "password";
+    });
+  }
+
+  if(!(pinForm && pinInput)) return;
+
+  pinForm.addEventListener("submit", async (ev)=>{
+    ev.preventDefault();
+    hideGlobalError();
+
+    const v = normalizePinInput(pinInput.value);
+    const submitBtn = pinForm.querySelector('button[type="submit"]');
+
+    await withButtonBusy_(submitBtn, "جاري التحقق...", async ()=>{
+      const isSheetsCfg = !!(API_CFG && API_CFG.scriptUrl);
+
+      // ✅ Sheets mode: validate PIN server-side (Apps Script)
+      if(isSheetsCfg){
+        showOverlay("جاري التحقق من الـ PIN...");
+        try{
+          // If PIN wrong -> WebApp returns BAD_PIN
+          await apiCall(API_ACTIONS.init, {}, { pin: v });
+
+          // persist session PIN (only after success)
+          if(API_CFG) API_CFG.pin = v;
+          try{ sessionStorage.setItem("oy_pin", v); }catch(_){}
+
+          setAuthed(true);
+          if(pinError) pinError.hidden = true;
+          pinInput.value = "";
+          pinInput.type = "password";
+
+          openApp();
+
+          try{ await STORE.init(); }
+          catch(e){
+            console.error(e);
+            showGlobalError("تعذر تهيئة التخزين على الشيت. سيتم استخدام التخزين المحلي مؤقتًا.");
+          }
+
+          await refresh(true);
+          return;
+    }catch(e){
+      console.error(e);
+
+      const msg = String(e?.message || e || "");
+
+      // ✅ لو السيرفر رجّع BAD_PIN: اعرض رسالة PIN غير صحيح
+      if(msg.includes("BAD_PIN")){
+        if(pinError) pinError.hidden = false;
+      }else{
+        // ✅ أي خطأ تاني غالبًا: لينك WebApp غلط / نشر قديم / صلاحيات / شبكة
+        if(pinError) pinError.hidden = true;
+        showGlobalError("تعذر الاتصال بـ Web App. تأكد من نشر Apps Script الصحيح وأن لينك /exec مطابق داخل index.html.");
+      }
+
+      pinInput.focus();
+      pinInput.select();
+      return;
+    }finally{
+          hideOverlay();
+        }
+      }
+
+      // ✅ Local mode: fallback PIN check (لا يوجد سيرفر)
+      if(v === PIN_CODE){
+        setAuthed(true);
+        if(pinError) pinError.hidden = true;
+        pinInput.value = "";
+        pinInput.type = "password";
+
+        openApp();
+
+        try{ await STORE.init(); }
+        catch(e){
+          console.error(e);
+          showGlobalError("تعذر تهيئة التخزين. سيتم استخدام التخزين المحلي.");
+        }
+
+        await refresh(true);
+      } else {
+        if(pinError) pinError.hidden = false;
+        pinInput.focus();
+        pinInput.select();
+      }
+    });
+  });
+}
+
+/* -------------------- ✅ PIN Confirm Modal (بديل prompt/alert) -------------------- */
+
+function pinConfirmModalOpen(actionText = "تنفيذ العملية"){
+  return new Promise((resolve)=>{
+    const modal = el("pinConfirmModal");
+    const inp   = el("pinConfirmInput");
+    const ok    = el("pinConfirmOk");
+    const close = el("pinConfirmClose");
+    const err   = el("pinConfirmError");
+
+    if(!modal || !inp || !ok || !close || !err){
+      // fallback بسيط لو حد حذف المودال بالغلط
+      const v = prompt(`تأكيد ${actionText}\nاكتب PIN:`);
+      if(v === null) return resolve(false);
+      return resolve((v || "").trim() === PIN_CODE);
+    }
+
+    err.hidden = true;
+    inp.value = "";
+
+    // ✅ تحديث عنوان/وصف المودال حسب العملية (حذف / استرجاع / إلخ)
+    const h3 = modal.querySelector("h3");
+    const lbl = modal.querySelector("label");
+    if(h3) h3.textContent = `تأكيد ${actionText}`;
+    if(lbl) lbl.textContent = `أدخل PIN (${PIN_CODE}) لإتمام ${actionText}`;
+
+    modal.hidden = false;
+
+    const cleanup = ()=>{
+      ok.removeEventListener("click", onOk);
+      close.removeEventListener("click", onClose);
+      modal.removeEventListener("click", onBackdrop);
+      inp.removeEventListener("keydown", onKey);
+      modal.hidden = true;
     };
-  </script>
-</head>
 
-<body>
-  <!-- ✅ PIN GATE -->
-  <div id="pinGate" class="gate">
-    <div class="gateShell">
-      <div class="gateWrap">
-        <div class="gateCard2">
-          <div class="gateHead2">
-            <div class="gateAvatar">أ</div>
-            <div class="gateTitleWrap">
-              <div class="gateTitle">سوبر ماركت أولاد يحيى</div>
-              <div class="gateSub">إدارة هيثم</div>
-            </div>
+    const onClose = ()=>{
+      cleanup();
+      resolve(false);
+    };
+
+    const onBackdrop = (ev)=>{
+      if(ev.target === modal){
+        cleanup();
+        resolve(false);
+      }
+    };
+
+    const onOk = ()=>{
+      const v = normalizePinInput(inp.value);
+      if(v !== PIN_CODE){
+        err.hidden = false;
+        inp.focus();
+        inp.select();
+        return;
+      }
+      cleanup();
+      resolve(true);
+    };
+
+    const onKey = (ev)=>{
+      if(ev.key === "Enter"){ ev.preventDefault(); onOk(); }
+      if(ev.key === "Escape"){ ev.preventDefault(); onClose(); }
+    };
+
+    ok.addEventListener("click", onOk);
+    close.addEventListener("click", onClose);
+    modal.addEventListener("click", onBackdrop);
+    inp.addEventListener("keydown", onKey);
+
+    setTimeout(()=>{ inp.focus(); }, 50);
+  });
+}
+
+/* -------------------- Forms -------------------- */
+function resetForm(){
+  el("date") && (el("date").value = "");
+  el("type") && (el("type").value = "");
+  el("party") && (el("party").value = "");
+  el("desc") && (el("desc").value = "");
+  el("category") && (el("category").value = "");
+  el("total") && (el("total").value = "");
+  el("firstPay") && (el("firstPay").value = "");
+  el("notes") && (el("notes").value = "");
+}
+
+function getEntryFromForm(){
+  const entry = {
+    id: uid(),
+    date: (el("date")?.value || "").trim(),
+    type: (el("type")?.value || "").trim(),
+    party: (el("party")?.value || "").trim(),
+    desc: (el("desc")?.value || "").trim(),
+    category: (el("category")?.value || "").trim(),
+    total: (el("total")?.value === "" || el("total") == null) ? null : Number(el("total")?.value),
+    notes: (el("notes")?.value || "").trim(),
+    createdAt: Date.now()
+  };
+
+  const fpRaw = el("firstPay")?.value;
+  let firstPay = null;
+
+  if(fpRaw != null && fpRaw !== ""){
+    const fpNum = Number(fpRaw);
+    if(Number.isFinite(fpNum) && fpNum > 0) firstPay = fpNum;
+    else {
+      firstPay = null;
+      if(el("firstPay")) el("firstPay").value = "";
+    }
+  }
+
+  if(entry.type === "expense"){
+    firstPay = null;
+    if(el("firstPay")) el("firstPay").value = "";
+  }
+
+  return { entry, firstPay };
+}
+
+function validateEntry(entry){
+  if(!entry.date) return "من فضلك اختر التاريخ.";
+  if(!entry.type) return "من فضلك اختر النوع.";
+  if(!entry.party) return "من فضلك اكتب الاسم/الجهة.";
+  if(entry.total === null || !Number.isFinite(entry.total) || entry.total <= 0) return "من فضلك اكتب الإجمالي (رقم أكبر من صفر).";
+  if(entry.type === "expense" && !entry.category) return "من فضلك اختر تصنيف للمصاريف.";
+  return null;
+}
+
+/* -------------------- ✅ الحساب الصحيح للمدفوع/الباقي -------------------- */
+function computeEntryView(entry, payments){
+  const total = Number(entry.total);
+  const side = moneySide(entry.type);
+
+  if(entry.type === "expense"){
+    return { ...entry, side, paid: 0, remaining: 0 };
+  }
+
+  const affectingFlow = (side === "receivable") ? "in" : "out";
+  const paid = sumPaymentsForEntry(entry.id, payments, affectingFlow);
+
+  const remaining = (Number.isFinite(total) ? Math.max(total - paid, 0) : NaN);
+  return { ...entry, side, paid, remaining };
+}
+
+/* -------------------- ✅ Store Layer (Sheets + fallback) -------------------- */
+const API_CFG = (window.AXENTRO_API && typeof window.AXENTRO_API === "object")
+  ? window.AXENTRO_API
+  : null;
+
+const API_ACTIONS = {
+  init: "init",
+  getAll: "getAll",
+  addEntry: "addEntry",
+  addPayment: "addPayment",
+  deleteEntry: "deleteEntry",
+  deletePayment: "deletePayment",
+  getTrash: "getTrash",
+  restoreTrash: "restoreTrash",
+  deleteTrashLog: "deleteTrashLog"
+};
+
+/* ✅✅✅ FIX CORS: GET ONLY (بدون preflight) */
+/* ===================== API Helper (Sheets Mode) ===================== */
+/**
+ * Robust GET client:
+ * - First try fetch() with timeout
+ * - If CORS/network blocks, fallback to JSONP (?callback=...)
+ * Notes:
+ * - WebApp supports JSONP already (code.gs)
+ * - We keep requests GET-only to avoid preflight
+ */
+async function apiCall(action, payload = {}, opts = {}){
+  if(!API_CFG?.scriptUrl) throw new Error("NO_SCRIPT_URL");
+
+  const url = String(API_CFG.scriptUrl || "").trim();
+  const pin = normalizePinInput(String((opts.pin ?? API_CFG.pin) || "").trim()); // ✅ PIN is provided by user at runtime
+
+  const qs = new URLSearchParams();
+  qs.set("action", action);
+  qs.set("pin", pin);
+  qs.set("payload", JSON.stringify(payload));
+  qs.set("_ts", String(Date.now())); // cache-buster
+
+  // keep query minimal for GET
+  const full = `${url}?${qs.toString()}`;
+
+  // 1) fetch() with timeout
+  try{
+    const j = await fetchJsonWithTimeout_(full, { timeoutMs: 8000 });
+    if(!j || j.ok === false) throw new Error(j?.error || "API_ERROR");
+    return j;
+  }catch(fetchErr){
+    // 2) JSONP fallback (bypass CORS)
+    try{
+      const j = await jsonpWithTimeout_(full, { timeoutMs: 10000 });
+      if(!j || j.ok === false) throw new Error(j?.error || "API_ERROR");
+      return j;
+    }catch(jsonpErr){
+      // surface original error if possible
+      throw fetchErr;
+    }
+  }
+}
+
+async function fetchJsonWithTimeout_(url, { timeoutMs = 8000 } = {}){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=> ctrl.abort(), timeoutMs);
+  try{
+    const r = await fetch(url, { method:"GET", mode:"cors", signal: ctrl.signal });
+    const j = await r.json();
+    return j;
+  }finally{
+    clearTimeout(t);
+  }
+}
+
+function jsonpWithTimeout_(url, { timeoutMs = 10000 } = {}){
+  return new Promise((resolve, reject)=>{
+    const cbName = `__oy_jsonp_${Date.now()}_${Math.floor(Math.random()*1e9)}`;
+    const sep = url.includes("?") ? "&" : "?";
+    const full = `${url}${sep}callback=${encodeURIComponent(cbName)}`;
+
+    let done = false;
+    const cleanup = ()=>{
+      if(done) return;
+      done = true;
+      try{ delete window[cbName]; }catch(_){}
+      if(script && script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timer);
+    };
+
+    window[cbName] = (data)=>{
+      cleanup();
+      resolve(data);
+    };
+
+    const script = document.createElement("script");
+    script.src = full;
+    script.async = true;
+    script.onerror = ()=>{
+      cleanup();
+      reject(new Error("JSONP_ERROR"));
+    };
+
+    const timer = setTimeout(()=>{
+      cleanup();
+      reject(new Error("JSONP_TIMEOUT"));
+    }, timeoutMs);
+
+    document.head.appendChild(script);
+  });
+}
+
+
+
+class LocalStore {
+  async init(){ return true; }
+  async getAll(){
+    try{
+      const raw = localStorage.getItem(LS_KEY);
+      const data = raw ? JSON.parse(raw) : { entries: [], payments: [] };
+      if(!Array.isArray(data.entries)) data.entries = [];
+      if(!Array.isArray(data.payments)) data.payments = [];
+
+      data.payments = data.payments.map(p => ({
+        ...p,
+        flow: (p.flow === "in" || p.flow === "out") ? p.flow : "out"
+      }));
+
+      const rawT = localStorage.getItem(TRASH_KEY);
+      const t = rawT ? JSON.parse(rawT) : { logs: [] };
+      if(!Array.isArray(t.logs)) t.logs = [];
+
+      return { entries: data.entries, payments: data.payments, trash: t.logs };
+    }catch{
+      return { entries: [], payments: [], trash: [] };
+    }
+  }
+  async setAll(entries, payments, trashLogs){
+    localStorage.setItem(LS_KEY, JSON.stringify({ entries, payments }));
+    localStorage.setItem(TRASH_KEY, JSON.stringify({ logs: (trashLogs || []).slice(0, MAX_TRASH) }));
+  }
+  async addEntry(entry){
+    const all = await this.getAll();
+    all.entries.push(entry);
+    await this.setAll(all.entries, all.payments, all.trash);
+  }
+  async addPayment(payment){
+    const all = await this.getAll();
+    all.payments.push(payment);
+    await this.setAll(all.entries, all.payments, all.trash);
+  }
+  async deleteEntry(entryId, snapshot){
+    const all = await this.getAll();
+    all.entries = all.entries.filter(e => e.id !== entryId);
+    all.payments = all.payments.filter(p => p.entryId !== entryId);
+
+    const logs = (all.trash || []);
+    logs.unshift({ id: uid(), at: Date.now(), type:"delete_entry", ...snapshot });
+
+    await this.setAll(all.entries, all.payments, logs);
+  }
+  async deletePayment(payId, snapshot){
+    const all = await this.getAll();
+    all.payments = all.payments.filter(p => p.id !== payId);
+
+    const logs = (all.trash || []);
+    logs.unshift({ id: uid(), at: Date.now(), type:"delete_payment", ...snapshot });
+
+    await this.setAll(all.entries, all.payments, logs);
+  }
+  async getTrash(){
+    const all = await this.getAll();
+    return all.trash || [];
+  }
+  async deleteTrashLog(logId){
+    const rawT = localStorage.getItem(TRASH_KEY);
+    const t = rawT ? JSON.parse(rawT) : { logs: [] };
+    t.logs = (t.logs || []).filter(x => x.id !== logId);
+    localStorage.setItem(TRASH_KEY, JSON.stringify(t));
+  }
+}
+
+class SheetsStore {
+  async init(){
+    await apiCall(API_ACTIONS.init, {});
+    return true;
+  }
+  async getAll(){
+    const j = await apiCall(API_ACTIONS.getAll, {});
+    return {
+      entries: Array.isArray(j.entries) ? j.entries : [],
+      payments: Array.isArray(j.payments) ? j.payments : [],
+      trash: Array.isArray(j.trash) ? j.trash : []
+    };
+  }
+  async addEntry(entry){ await apiCall(API_ACTIONS.addEntry, { entry }); }
+  async addPayment(payment){ await apiCall(API_ACTIONS.addPayment, { payment }); }
+  async deleteEntry(entryId, snapshot){ await apiCall(API_ACTIONS.deleteEntry, { entryId, snapshot }); }
+  async deletePayment(payId, snapshot){ await apiCall(API_ACTIONS.deletePayment, { payId, snapshot }); }
+  async getTrash(){
+    const j = await apiCall(API_ACTIONS.getTrash, {});
+    return Array.isArray(j.trash) ? j.trash : [];
+  }
+  async deleteTrashLog(logId){ await apiCall(API_ACTIONS.deleteTrashLog, { logId }); }
+  async restoreTrash(refTable, refId, snapshot){
+    const j = await apiCall(API_ACTIONS.restoreTrash, { refTable, refId, snapshot });
+    return j;
+  }
+}
+
+class HybridStore {
+  constructor(){
+    this.local = new LocalStore();
+    this.sheets = new SheetsStore();
+    this.mode = (API_CFG?.scriptUrl) ? "sheets" : "local";
+  }
+
+  async init(){
+    await this.local.init();
+    if(this.mode === "local") return true;
+
+    try{
+      await this.sheets.init();
+      this.mode = "sheets";
+      return true;
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
+      throw e;
+    }
+  }
+
+  async getAll(){
+    if(this.mode === "local"){
+      return await this.local.getAll();
+    }
+
+    try{
+      const all = await this.sheets.getAll();
+
+      const payments = (all.payments || []).map(p => ({
+        ...p,
+        flow: (p.flow === "in" || p.flow === "out") ? p.flow : "out"
+      })).filter(p => !isRowDeleted(p));
+      await this.local.setAll(all.entries || [], payments, all.trash || []);
+      return { entries: all.entries || [], payments, trash: all.trash || [] };
+
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
+      return await this.local.getAll();
+    }
+  }
+
+  async addEntry(entry){
+    if(this.mode === "local"){
+      return await this.local.addEntry(entry);
+    }
+    try{
+      await this.sheets.addEntry(entry);
+      await this.local.addEntry(entry);
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
+      await this.local.addEntry(entry);
+      throw e;
+    }
+  }
+
+  async addPayment(payment){
+    if(this.mode === "local"){
+      return await this.local.addPayment(payment);
+    }
+    try{
+      await this.sheets.addPayment(payment);
+      await this.local.addPayment(payment);
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
+      await this.local.addPayment(payment);
+      throw e;
+    }
+  }
+
+  async deleteEntry(entryId, snapshot){
+    if(this.mode === "local"){
+      return await this.local.deleteEntry(entryId, snapshot);
+    }
+    try{
+      await this.sheets.deleteEntry(entryId, snapshot);
+      await this.local.deleteEntry(entryId, snapshot);
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
+      await this.local.deleteEntry(entryId, snapshot);
+      throw e;
+    }
+  }
+
+  async deletePayment(payId, snapshot){
+    if(this.mode === "local"){
+      return await this.local.deletePayment(payId, snapshot);
+    }
+    try{
+      await this.sheets.deletePayment(payId, snapshot);
+      await this.local.deletePayment(payId, snapshot);
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
+      await this.local.deletePayment(payId, snapshot);
+      throw e;
+    }
+  }
+
+  async getTrash(){
+    const all = await this.getAll();
+    return all.trash || [];
+  }
+
+  async deleteTrashLog(logId){
+    if(this.mode === "local"){
+      return await this.local.deleteTrashLog(logId);
+    }
+    try{
+      await this.sheets.deleteTrashLog(logId);
+      await this.local.deleteTrashLog(logId);
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
+      await this.local.deleteTrashLog(logId);
+      throw e;
+    }
+  }
+
+  async restoreTrash(refTable, refId, snapshot){
+    if(this.mode === "local"){
+      throw new Error("UNSUPPORTED_LOCAL_RESTORE");
+    }
+    try{
+      return await this.sheets.restoreTrash(refTable, refId, snapshot);
+    }catch(e){
+      console.error(e);
+      this.mode = "local";
+      throw e;
+    }
+  }
+}
+
+const STORE = new HybridStore();
+
+/* -------------------- Global Cache -------------------- */
+const STATE = {
+  entries: [],
+  payments: [],
+  trash: []
+};
+
+/* -------------------------------------------------------
+   ✅ Chunked rendering helpers (لتجنب freeze)
+------------------------------------------------------- */
+function raf(){
+  return new Promise(r=>requestAnimationFrame(()=>r()));
+}
+
+async function renderChunked(tbody, items, renderRow, opts = {}){
+  const chunkSize = Number(opts.chunkSize || 180);
+  const tokenKey = opts.tokenKey || null;
+  const tokenVal = opts.tokenVal || null;
+
+  tbody.innerHTML = "";
+  const frag = document.createDocumentFragment();
+
+  for(let i=0;i<items.length;i++){
+    // إلغاء رندر قديم لو بدأ رندر أحدث
+    if(tokenKey && tokenVal != null && window[tokenKey] !== tokenVal) return;
+
+    const tr = renderRow(items[i], i);
+    frag.appendChild(tr);
+
+    if((i+1) % chunkSize === 0){
+      tbody.appendChild(frag);
+      await raf();
+    }
+  }
+  tbody.appendChild(frag);
+}
+
+/* -------------------- Render Queue (حل التجميد بعد Refresh) -------------------- */
+let __renderPending = false;
+let __renderToken = 0;
+
+function requestRender(){
+  if(__renderPending) return;
+  __renderPending = true;
+  const token = ++__renderToken;
+
+  Promise.resolve().then(async ()=>{
+    await raf();                 // سيب فرصة للـ UI
+    __renderPending = false;
+    if(token !== __renderToken) return; // لو اتطلب رندر أحدث تجاهل القديم
+    await renderFromState();
+  });
+}
+
+// أبقيت الاسم ده عشان لو في أماكن قديمة بتناديه
+function scheduleRender(){ requestRender(); }
+
+/* -------------------- Render (من الكاش فقط) ✅ سرعة -------------------- */
+async function renderFromState(){
+  const entriesView = STATE.entries.map(e => computeEntryView(e, STATE.payments));
+  renderKPIs(entriesView, STATE.payments);
+
+  await renderEntriesTable(applyEntryFilters(entriesView));
+  await renderPaymentsTable(STATE.payments, STATE.entries);
+
+  const trashPage = document.getElementById("page-trash");
+  if(trashPage && !trashPage.hidden) renderTrash();
+
+  const reportsPage = document.getElementById("page-reports");
+  if(reportsPage && !reportsPage.hidden) renderReports();
+}
+
+async function renderFromStatePartial(flags = {}){
+  const entriesChanged = !!flags.entriesChanged;
+  const paymentsChanged = !!flags.paymentsChanged;
+  const trashChanged = !!flags.trashChanged;
+
+  // KPIs تعتمد على entries + payments
+  if(entriesChanged || paymentsChanged){
+    const entriesView = STATE.entries.map(e => computeEntryView(e, STATE.payments));
+    renderKPIs(entriesView, STATE.payments);
+
+    // جدول العمليات يعتمد على الاتنين
+    await renderEntriesTable(applyEntryFilters(entriesView));
+
+    // جدول المدفوعات يعتمد على الاتنين (مرجع/party/ref)
+    await renderPaymentsTable(STATE.payments, STATE.entries);
+  }
+
+  const trashPage = document.getElementById("page-trash");
+  if(trashChanged && trashPage && !trashPage.hidden) renderTrash();
+
+  const reportsPage = document.getElementById("page-reports");
+  if((entriesChanged || paymentsChanged) && reportsPage && !reportsPage.hidden) renderReports();
+}
+
+/* -------------------- Render KPIs -------------------- */
+function computeTotals(entriesView, payments){
+  const expensesTotal = entriesView
+    .filter(e => e.type === "expense")
+    .reduce((a,e)=> a + (Number.isFinite(e.total) ? e.total : 0), 0);
+
+  const paidOutTotal = payments
+    .filter(p => (p.flow || "out") === "out")
+    .reduce((a,p)=> a + Number(p.amount || 0), 0);
+
+  const remainingReceivable = entriesView
+    .filter(e => e.side === "receivable")
+    .reduce((a,e)=> a + (Number.isFinite(e.remaining) ? e.remaining : 0), 0);
+
+  const remainingPayable = entriesView
+    .filter(e => e.side === "payable")
+    .reduce((a,e)=> a + (Number.isFinite(e.remaining) ? e.remaining : 0), 0);
+
+  return { expensesTotal, paidOutTotal, remainingReceivable, remainingPayable };
+}
+
+function renderKPIs(entriesView, payments){
+  const t = computeTotals(entriesView, payments);
+
+  el("kpiExpenses") && (el("kpiExpenses").textContent = fmt(t.expensesTotal));
+  el("kpiPaid") && (el("kpiPaid").textContent = fmt(t.paidOutTotal));
+  el("kpiReceivable") && (el("kpiReceivable").textContent = fmt(t.remainingReceivable));
+  el("kpiPayable") && (el("kpiPayable").textContent = fmt(t.remainingPayable));
+  el("kpiCount") && (el("kpiCount").textContent = entriesView.length.toLocaleString("ar-EG"));
+}
+
+/* -------------------- Filters -------------------- */
+function applyEntryFilters(entriesView){
+  const q  = (el("q")?.value || "").trim().toLowerCase();
+  const ft = (el("filterType")?.value || "").trim();
+  const fo = (el("filterOpen")?.value || "").trim();
+
+  return entriesView.filter(e=>{
+    const hitQ = !q || (
+      (e.party || "").toLowerCase().includes(q) ||
+      (e.desc || "").toLowerCase().includes(q) ||
+      (e.notes || "").toLowerCase().includes(q) ||
+      (e.category || "").toLowerCase().includes(q)
+    );
+
+    const hitT = !ft || e.type === ft;
+
+    // ✅ فلتر "عليه باقي/مقفول" منطقي للعمليات المستحقة فقط (مش للمصروف)
+    const hitO =
+      !fo ||
+      (fo === "open"   && e.type !== "expense" && Number(e.remaining) > 0) ||
+      (fo === "closed" && e.type !== "expense" && Number(e.remaining) === 0);
+
+    return hitQ && hitT && hitO;
+  });
+}
+
+/* -------------------- Entries Table -------------------- */
+let __entriesRenderToken = 0;
+
+async function renderEntriesTable(entriesView){
+  const tbody = el("tbody");
+  if(!tbody) return;
+
+  const myToken = ++__entriesRenderToken;
+  window.__entriesRenderToken = myToken;
+
+  const sorted = [...entriesView].sort((a,b)=>
+    (b.date || "").localeCompare(a.date || "") || (b.createdAt - a.createdAt)
+  );
+
+  if(sorted.length === 0){
+    tbody.innerHTML = `<tr><td colspan="9">لا توجد عمليات مطابقة.</td></tr>`;
+    return;
+  }
+
+  await renderChunked(
+    tbody,
+    sorted,
+    (e)=>{
+      const cat = e.type === "expense" ? (e.category || "—") : "—";
+
+      const payBtn = (e.type === "expense")
+        ? `<button class="btn small" type="button" disabled title="المصروف لا يحتاج دفعات">إضافة دفعة</button>`
+        : `<button class="btn small" data-act="pay" data-id="${e.id}">إضافة دفعة</button>`;
+
+      const partyCell = `
+        <button class="btn small ghost" data-act="person" data-name="${escapeHtml(e.party || "")}" data-side="${e.side}">
+          ${escapeHtml(e.party || "")}
+        </button>
+      `;
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${e.date || "—"}</td>
+        <td><span class="badge">${typeLabel(e.type)}</span></td>
+        <td>${partyCell}</td>
+        <td>${escapeHtml(e.desc || "")}</td>
+        <td>${escapeHtml(cat)}</td>
+        <td class="num">${fmt(e.total)}</td>
+        <td class="num">${fmt(e.paid)}</td>
+        <td class="num">${fmt(e.remaining)}</td>
+        <td>
+          <div class="rowActions">
+            <button class="btn small" data-act="preview" data-id="${e.id}">معاينة</button>
+            ${payBtn}
+            <button class="btn small danger" data-act="del" data-id="${e.id}">حذف</button>
           </div>
+        </td>
+      `;
+      return tr;
+    },
+    { chunkSize: 160, tokenKey: "__entriesRenderToken", tokenVal: myToken }
+  );
+}
 
-          <form id="pinForm" class="gateForm2">
-            <label class="pinLbl">PIN</label>
+/* -------------------- Payments Table -------------------- */
+let __paymentsRenderToken = 0;
 
-            <div class="pinInputWrap">
-              <input id="pinInput" class="pinInput" type="password" inputmode="numeric"
-                     placeholder="ادخل PIN هنا" maxlength="8" />
-              <button id="pinToggle" class="pinToggle" type="button" aria-label="إظهار/إخفاء PIN">👁</button>
-            </div>
+async function renderPaymentsTable(payments, entries){
+  const tbody = el("payTbody");
+  if(!tbody) return;
 
-            <div class="help">التعليمات: اكتب الرقم السري ثم اضغط “دخول”.</div>
+  const myToken = ++__paymentsRenderToken;
+  window.__paymentsRenderToken = myToken;
 
-            <div class="orDivider"><span>أو</span></div>
+  const q = (el("payQ")?.value || "").trim().toLowerCase();
 
-            <!-- ✅ Google Sign-In (قريبًا) -->
-            <button id="googleLoginBtn" class="btnPin googleBtn" type="button" aria-label="تسجيل دخول بجوجل">
-              تسجيل دخول بجوجل (قريبًا)
-            </button>
-            <div id="googleLoginHint" class="help">
-              سيتم تفعيل تسجيل الدخول بجوجل بعد إعداد نظام السماح (Allowlist). حاليًا هذا الزر للتجهيز فقط.
-            </div>
+  const entryById = new Map(entries.map(e => [e.id, e]));
 
-            <button class="btnPin" type="submit">دخول</button>
-            <div id="pinError" class="error" hidden>PIN غير صحيح.</div>
+  const filtered = payments.filter(p=>{
+    if(!q) return true;
+    const en = entryById.get(p.entryId);
+    const party = (p.party || en?.party || "").toLowerCase();
+    const note = (p.note || "").toLowerCase();
+    const flow = flowLabel(p.flow || "out").toLowerCase();
+    return party.includes(q) || note.includes(q) || flow.includes(q);
+  });
 
-            <div class="warnLine">⚠️ تنبيه: هذه الصفحة للإدارة فقط وليست للعملاء.</div>
-          </form>
+  const sorted = [...filtered].sort((a,b)=>
+    (b.date || "").localeCompare(a.date || "") || (b.createdAt - a.createdAt)
+  );
+
+  if(sorted.length === 0){
+    tbody.innerHTML = `<tr><td colspan="6">لا توجد مدفوعات لعرضها.</td></tr>`;
+    return;
+  }
+
+  await renderChunked(
+    tbody,
+    sorted,
+    (p)=>{
+      const en = entryById.get(p.entryId);
+      const ref = en ? `${typeLabel(en.type)} • ${en.date} • إجمالي ${fmt(en.total)}` : "—";
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${p.date || "—"}</td>
+        <td>${escapeHtml(p.party || en?.party || "—")}</td>
+        <td>${escapeHtml(ref)} • <span class="badge">${flowLabel(p.flow || "out")}</span></td>
+        <td class="num">${fmt(p.amount)}</td>
+        <td>${escapeHtml(p.note || "—")}</td>
+        <td><button class="btn small danger" data-paydel="${p.id}">حذف</button></td>
+      `;
+      return tr;
+    },
+    { chunkSize: 180, tokenKey: "__paymentsRenderToken", tokenVal: myToken }
+  );
+}
+
+/* -------------------- Payments Modal -------------------- */
+let CURRENT_PAY_ENTRY_ID = null;
+
+function ensurePayFlowControl(){
+  const modalBody = el("payModal")?.querySelector(".modalBody");
+  if(!modalBody) return;
+
+  if(el("payFlow")) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  wrap.innerHTML = `
+    <label>اتجاه الدفعة</label>
+    <select id="payFlow">
+      <option value="out" selected>مدفوعات خارجة (أنا دفعت)</option>
+      <option value="in">متحصلات داخلة (اتدفعتلي)</option>
+    </select>
+    <div class="help">اختار هل الدفعة خرجت منك ولا دخلت لك.</div>
+  `;
+
+  const saveBtn = el("paySave");
+  if(saveBtn) modalBody.insertBefore(wrap, saveBtn);
+  else modalBody.appendChild(wrap);
+}
+
+function openPayModal(entryId){
+  const entry = STATE.entries.find(e => e.id === entryId);
+  if(entry?.type === "expense"){
+    alert("المصروف لا يحتاج إضافة دفعات.");
+    return;
+  }
+
+  ensurePayFlowControl();
+
+  CURRENT_PAY_ENTRY_ID = entryId;
+  el("payDate") && (el("payDate").value = todayISO());
+  el("payAmount") && (el("payAmount").value = "");
+  el("payNote") && (el("payNote").value = "");
+  el("payError") && (el("payError").hidden = true);
+
+  el("payFlow") && (el("payFlow").value = "out");
+
+  el("payModal") && (el("payModal").hidden = false);
+}
+function closePayModal(){
+  el("payModal") && (el("payModal").hidden = true);
+  CURRENT_PAY_ENTRY_ID = null;
+}
+
+/* -------------------- Print Footer -------------------- */
+function cleanupLegacyInjectedFooters(){
+  document.querySelectorAll(".__printFooterInjected").forEach(n => n.remove());
+}
+function preparePrintForCurrentPage(){
+  cleanupLegacyInjectedFooters();
+
+  // ✅ اجعل الطباعة موحّدة: اطبع الصفحة الظاهرة فقط + هيدر للطباعة
+  document.querySelectorAll("#appRoot .page").forEach(p => p.classList.remove("printActive"));
+  const activePage = Array.from(document.querySelectorAll("#appRoot .page"))
+    .find(p => !p.hidden) || null;
+  if(activePage) activePage.classList.add("printActive");
+
+  const titleEl =
+    activePage?.querySelector(".pageHead h2") ||
+    activePage?.querySelector(".previewHead h2") ||
+    null;
+  const title = titleEl ? titleEl.textContent.trim() : "طباعة";
+
+  const phTitle = document.getElementById("printHeaderTitle");
+  const phMeta  = document.getElementById("printHeaderMeta");
+  if(phTitle) phTitle.textContent = title;
+  if(phMeta)  phMeta.textContent = new Date().toLocaleString("ar-EG");
+}
+window.addEventListener("beforeprint", preparePrintForCurrentPage);
+
+/* -------------------- Preview: Entry -------------------- */
+function openEntryPreview(entryId){
+  const entry = STATE.entries.find(e => e.id === entryId);
+  if(!entry) return;
+
+  const v = computeEntryView(entry, STATE.payments);
+
+  el("prevEntryMeta") && (el("prevEntryMeta").textContent =
+    `تاريخ الإنشاء: ${new Date(entry.createdAt).toLocaleString("ar-EG")}`
+  );
+
+  const statusText =
+    (v.type === "expense")
+      ? "الحالة: مصروف (ليس مستحق)"
+      : (v.remaining === 0 ? "الحالة: مقفول" : `الحالة: عليه باقي ${fmt(v.remaining)} ج.م`);
+
+  el("prevEntryStatus") && (el("prevEntryStatus").textContent = statusText);
+
+  el("prevDate") && (el("prevDate").textContent = v.date || "—");
+  el("prevType") && (el("prevType").textContent = typeLabel(v.type));
+  el("prevParty") && (el("prevParty").textContent = v.party || "—");
+  el("prevDesc") && (el("prevDesc").textContent = v.desc || "—");
+  el("prevCat") && (el("prevCat").textContent = (v.type === "expense" ? (v.category || "—") : "—"));
+  el("prevNotes") && (el("prevNotes").textContent = v.notes || "—");
+  el("prevTotal") && (el("prevTotal").textContent = `${fmt(v.total)} ج.م`);
+  el("prevPaidRemain") && (el("prevPaidRemain").textContent = `${fmt(v.paid)} / ${fmt(v.remaining)} ج.م`);
+
+  const tb = el("prevPaysTbody");
+  if(tb){
+    tb.innerHTML = "";
+
+    if(v.type === "expense"){
+      tb.innerHTML = `<tr><td colspan="3">المصروف لا يحتوي على مدفوعات.</td></tr>`;
+    } else {
+      const pays = STATE.payments
+        .filter(p => p.entryId === entryId)
+        .sort((a,b)=> (a.date || "").localeCompare(b.date || "") || (a.createdAt - b.createdAt));
+
+      if(pays.length === 0){
+        tb.innerHTML = `<tr><td colspan="3">لا توجد مدفوعات لهذه العملية.</td></tr>`;
+      }else{
+        for(const p of pays){
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${p.date || "—"}</td>
+            <td>${escapeHtml(`${p.note || "—"} • ${flowLabel(p.flow || "out")}`)}</td>
+            <td class="num">${fmt(p.amount)}</td>
+          `;
+          tb.appendChild(tr);
+        }
+      }
+    }
+  }
+
+  showPage("entryPreview");
+}
+
+/* -------------------- Ledger -------------------- */
+let ledgerTimer = null;
+
+function getLedgerMode(){
+  const m = (el("ledgerMode")?.value || "all").trim();
+  return (m === "customer" || m === "supplier" || m === "all") ? m : "all";
+}
+
+function entryMatchesLedgerMode(entry, mode){
+  if(mode === "all") return true;
+  if(mode === "customer") return entry.side === "receivable";
+  if(mode === "supplier") return entry.side === "payable";
+  return true;
+}
+
+function showLedger(name){
+  const box = el("ledgerBox");
+  if(!box) return;
+
+  box.innerHTML = "";
+  const q = (name || "").trim().toLowerCase();
+  const mode = getLedgerMode();
+
+  const entriesAll = STATE.entries.map(e => computeEntryView(e, STATE.payments));
+  const paysAll = STATE.payments;
+
+  const entries = entriesAll
+    .filter(e => !q ? true : (e.party || "").trim().toLowerCase().includes(q))
+    .filter(e => entryMatchesLedgerMode(e, mode))
+    .sort((a,b)=> (a.date || "").localeCompare(a.date || "") || (a.createdAt - b.createdAt));
+
+  const allowedEntryIds = new Set(entries.map(e => e.id));
+
+  const pays = paysAll
+    .filter(p => !q ? true : (p.party || "").trim().toLowerCase().includes(q))
+    .filter(p => allowedEntryIds.has(p.entryId))
+    .sort((a,b)=> (a.date || "").localeCompare(b.date || "") || (b.createdAt - a.createdAt));
+
+  if(entries.length === 0 && pays.length === 0){
+    box.innerHTML = `<div class="muted">لا توجد بيانات مطابقة.</div>`;
+    return;
+  }
+
+  const total = entries.reduce((a,e)=> a + (Number.isFinite(e.total) ? e.total : 0), 0);
+  const paid  = entries.reduce((a,e)=> a + (Number.isFinite(e.paid) ? e.paid : 0), 0);
+  const rem   = entries.reduce((a,e)=> a + (Number.isFinite(e.remaining) ? e.remaining : 0), 0);
+
+  const headerMode =
+    mode === "customer" ? " (عملاء فقط)" :
+    mode === "supplier" ? " (موردين فقط)" :
+    "";
+
+  const paidLabel = (mode === "customer") ? "المدفوع (داخلة)" :
+                    (mode === "supplier") ? "المدفوع (خارجة)" :
+                    "المدفوع";
+
+  const nameLabel = q ? ` — ${escapeHtml(name)}` : "";
+  box.innerHTML += `
+    <div class="line"><b>الإجمالي${headerMode}${nameLabel}</b><b>${fmt(total)}</b></div>
+    <div class="line"><span>${paidLabel}</span><b>${fmt(paid)}</b></div>
+    <div class="line"><span>المتبقي</span><b>${fmt(rem)}</b></div>
+  `;
+
+  box.innerHTML += `<div class="muted" style="margin:10px 0">تفاصيل العمليات:</div>`;
+  for(const e of entries){
+    box.innerHTML += `
+      <div class="line">
+        <div style="max-width:70%">
+          <div><b>${escapeHtml(e.party || "—")}</b></div>
+          <div class="muted">${e.date || "—"} • ${typeLabel(e.type)} • ${escapeHtml(e.desc || "—")}</div>
+          <div class="muted">الجهة المالية: ${sideLabel(e.side)}</div>
+          <div class="muted">ملاحظات: ${escapeHtml(e.notes || "—")}</div>
         </div>
-
-        <!-- ✅ Footer داخل اللوجين (زي ما كان) -->
-        <div class="gateFooter">
-          <div>© Axentro — All Rights Reserved 2024</div>
-          <div class="gateFooterMuted">By Ahmed Hamouda</div>
+        <div style="text-align:left; min-width: 140px">
+          <div>إجمالي: <b>${fmt(e.total)}</b></div>
+          <div class="muted">مدفوع: ${fmt(e.paid)}</div>
+          <div class="muted">باقي: ${fmt(e.remaining)}</div>
         </div>
       </div>
-    </div>
-  </div>
+    `;
+  }
 
-  <!-- ✅ APP HEADER -->
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">أ</div>
-      <div>
-        <h1>
-          سوبر ماركت أولاد يحيى
-          <span class="adminTag">إدارة هيثم</span>
-        </h1>
-        <p>مصاريف • سلف • آجل • موردين • مدفوعات منفصلة</p>
-      </div>
-    </div>
-
-    <!-- ✅ الهيدر: زر طباعة + تسجيل خروج فقط -->
-    <div class="actions">
-      <button id="btnPrint" class="btn ghost" type="button">طباعة</button>
-      <button id="btnLogout" class="btn danger" type="button">تسجيل خروج</button>
-    </div>
-  </header>
-
-  <!-- ✅ NAV (Tabs) -->
-  <nav class="navBar" id="navBar" hidden>
-    <button class="navBtn active" data-page="dashboard">🏠 الرئيسية</button>
-    <button class="navBtn" data-page="records">📒 السجل</button>
-    <button class="navBtn" data-page="payments">💳 المدفوعات</button>
-    <button class="navBtn" data-page="ledger">📊 كشف حساب</button>
-    <button class="navBtn" data-page="reports">📈 التقارير</button>
-    <button class="navBtn" data-page="trash">🗑️ المحذوفات</button>
-  </nav>
-
-  <main class="container" id="appRoot" hidden>
-
-    <!-- ✅ PAGE: DASHBOARD -->
-    <section id="page-dashboard" class="page">
-      <div class="grid">
-        <div class="card">
-          <h2>ملخص سريع</h2>
-
-          <div class="kpis">
-            <div class="kpi">
-              <span class="label">إجمالي المصروفات</span>
-              <span id="kpiExpenses" class="value">—</span>
-            </div>
-
-            <div class="kpi">
-              <span class="label">إجمالي المدفوعات</span>
-              <span id="kpiPaid" class="value">—</span>
-            </div>
-
-            <div class="kpi">
-              <span class="label">فلوس ليا (عملاء + سلف)</span>
-              <span id="kpiReceivable" class="value">—</span>
-            </div>
-
-            <div class="kpi">
-              <span class="label">فلوس عليا (موردين)</span>
-              <span id="kpiPayable" class="value">—</span>
-            </div>
-
-            <div class="kpi">
-              <span class="label">عدد العمليات</span>
-              <span id="kpiCount" class="value">—</span>
-            </div>
+  if(pays.length){
+    box.innerHTML += `<div class="muted" style="margin:10px 0">تفاصيل المدفوعات:</div>`;
+    for(const p of pays){
+      box.innerHTML += `
+        <div class="line">
+          <div style="max-width:70%">
+            <div><b>${escapeHtml(p.party || "—")}</b></div>
+            <div class="muted">${p.date || "—"} • ${escapeHtml(p.note || "—")} • ${flowLabel(p.flow || "out")}</div>
           </div>
-
-          <p class="hint" style="margin-top:10px">
-            * “فلوس ليا” = آجل عميل + سُلفة. — “فلوس عليا” = فواتير موردين. — المصروفات ليست مستحقات.
-          </p>
-        </div>
-
-        <div class="card">
-          <h2>إضافة عملية جديدة</h2>
-
-          <form id="entryForm" class="form">
-            <div class="row">
-              <div class="field">
-                <label>التاريخ</label>
-                <input id="date" type="date" />
-                <div class="help">التعليمات: اختار تاريخ العملية.</div>
-              </div>
-
-              <div class="field">
-                <label>النوع</label>
-                <select id="type">
-                  <option value="" selected>— اختر —</option>
-                  <option value="expense">مصروف</option>
-                  <option value="advance">سُلفة</option>
-                  <option value="credit_customer">آجل (عميل)</option>
-                  <option value="credit_supplier">فاتورة/مورد (تاجر)</option>
-                </select>
-                <div class="help">التعليمات: اختر نوع العملية لتظهر في التقارير بشكل صحيح.</div>
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="field">
-                <label>الاسم / الجهة</label>
-                <input id="party" type="text" placeholder="مثال: أحمد / عميل محمد / مورد الشروق" />
-                <div class="help">التعليمات: اكتب اسم الشخص أو الجهة.</div>
-              </div>
-
-              <div class="field">
-                <label>وصف العملية</label>
-                <input id="desc" type="text" placeholder="مثال: إيجار فبراير / بضاعة آجلة / سلفة عامل" />
-                <div class="help">التعليمات: وصف مختصر يسهل عليك البحث بعدين.</div>
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="field">
-                <label>الإجمالي (جنيه)</label>
-                <input id="total" type="number" min="0" step="0.01" placeholder="مثال: 1500" />
-                <div class="help">التعليمات: اكتب إجمالي المبلغ (رقم أكبر من صفر).</div>
-              </div>
-
-              <div class="field">
-                <label>دفعة أولى (اختياري)</label>
-                <input id="firstPay" type="number" min="0" step="0.01" placeholder="مثال: 300" />
-                <div class="help">التعليمات: لو تم دفع جزء الآن، اكتب المبلغ. لو لا، سيبها فاضية.</div>
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="field">
-                <label>تصنيف (للمصاريف فقط)</label>
-                <select id="category">
-                  <option value="" selected>—</option>
-                  <option>مرتبات</option>
-                  <option>إيجار</option>
-                  <option>كهرباء</option>
-                  <option>مياه</option>
-                  <option>إنترنت</option>
-                  <option>نثريات</option>
-                  <option>صيانة</option>
-                  <option>نقل</option>
-                  <option>أخرى</option>
-                </select>
-                <div class="help">التعليمات: لو النوع “مصروف” اختار تصنيف، غير كده سيبه —.</div>
-              </div>
-
-              <div class="field">
-                <label>ملاحظات (اختياري)</label>
-                <input id="notes" type="text" placeholder="أي تفاصيل إضافية" />
-                <div class="help">التعليمات: اكتب أي ملاحظة (اختياري).</div>
-              </div>
-            </div>
-
-            <div class="row">
-              <button class="btn primary" type="submit">حفظ العملية</button>
-              <button id="btnReset" class="btn" type="button">مسح الحقول</button>
-            </div>
-
-            <p class="hint">
-              ملحوظة: المدفوعات بتتسجل في “سجل المدفوعات” منفصل. (المتبقي = الإجمالي - مجموع المدفوعات).
-            </p>
-          </form>
-        </div>
-      </div>
-    </section>
-
-    <!-- ✅ PAGE: RECORDS -->
-    <section id="page-records" class="page" hidden>
-      <div class="pageHead">
-        <h2>السجل</h2>
-      </div>
-
-      <div class="card">
-        <div class="toolbar">
-          <div class="filters">
-            <input id="q" type="search" placeholder="بحث بالاسم / الوصف / الملاحظات..." />
-            <select id="filterType">
-              <option value="">كل الأنواع</option>
-              <option value="expense">مصروف</option>
-              <option value="advance">سُلفة</option>
-              <option value="credit_customer">آجل (عميل)</option>
-              <option value="credit_supplier">فاتورة/مورد</option>
-            </select>
-            <select id="filterOpen">
-              <option value="">الكل</option>
-              <option value="open">عليه باقي فقط</option>
-              <option value="closed">مقفول (مدفوع بالكامل)</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>النوع</th>
-                <th>الاسم/الجهة</th>
-                <th>الوصف</th>
-                <th>تصنيف</th>
-                <th class="num">إجمالي (ج.م)</th>
-                <th class="num">مدفوع (ج.م)</th>
-                <th class="num">باقي (ج.م)</th>
-                <th>إجراءات</th>
-              </tr>
-            </thead>
-            <tbody id="tbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ✅ PAGE: PAYMENTS -->
-    <section id="page-payments" class="page" hidden>
-      <div class="pageHead">
-        <h2>سجل المدفوعات</h2>
-      </div>
-
-      <div class="card">
-        <div class="toolbar">
-          <div class="filters">
-            <input id="payQ" type="search" placeholder="بحث في المدفوعات بالاسم/ملاحظة..." />
-          </div>
-        </div>
-
-        <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>تاريخ الدفع</th>
-                <th>الاسم/الجهة</th>
-                <th>تابع لعملية</th>
-                <th class="num">المبلغ (ج.م)</th>
-                <th>ملاحظة</th>
-                <th>إجراء</th>
-              </tr>
-            </thead>
-            <tbody id="payTbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ✅ PAGE: LEDGER -->
-    <section id="page-ledger" class="page" hidden>
-      <div class="pageHead">
-        <h2>كشف حساب</h2>
-      </div>
-
-      <div class="card">
-        <div class="ledger">
-          <select id="ledgerMode">
-            <option value="all" selected>الكل</option>
-            <option value="customer">عملاء فقط (فلوس ليا)</option>
-            <option value="supplier">موردين فقط (فلوس عليا)</option>
-          </select>
-
-          <input id="ledgerName" type="text" placeholder="اكتب الاسم (جزء من الاسم يكفي)..." />
-          <button id="btnLedger" class="btn" type="button">عرض</button>
-          <button id="btnLedgerPreview" class="btn ghost" type="button">معاينة</button>
-          <div id="ledgerBox" class="ledgerBox"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ✅ PAGE: REPORTS -->
-    <section id="page-reports" class="page" hidden>
-      <div class="pageHead">
-        <h2>التقارير</h2>
-      </div>
-
-      <div class="card">
-        <div class="toolbar">
-          <div class="filters">
-            <select id="repRangePreset">
-              <option value="today">اليوم</option>
-              <option value="this_month">الشهر الحالي</option>
-              <option value="this_year">السنة الحالية</option>
-              <option value="last_7">آخر 7 أيام</option>
-              <option value="last_30">آخر 30 يوم</option>
-              <option value="custom" selected>فترة مخصصة</option>
-            </select>
-
-            <input id="repFrom" type="date" />
-            <input id="repTo" type="date" />
-
-            <select id="repType">
-              <option value="all" selected>كل الأنواع</option>
-              <option value="expense">مصاريف</option>
-              <option value="advance">سُلف</option>
-              <option value="credit_customer">عملاء آجل (فلوس ليا)</option>
-              <option value="credit_supplier">موردين (فلوس عليا)</option>
-              <option value="payments_out">مدفوعات خارجة (دفعت أنا)</option>
-              <option value="receipts_in">متحصلات داخلة (اتدفعتلي أنا)</option>
-            </select>
-
-            <input id="repParty" type="search" placeholder="فلتر بالاسم/الجهة (اختياري)..." />
-
-            <button id="btnRunReports" class="btn" type="button">تطبيق</button>
-            <button id="btnPrintReports" class="btn ghost" type="button">طباعة / PDF</button>
+          <div style="text-align:left; min-width: 140px">
+            <div>دفعة: <b>${fmt(p.amount)}</b></div>
           </div>
         </div>
+      `;
+    }
+  }
+}
 
-        <div class="kpis" style="margin-top:12px">
-          <div class="kpi">
-            <span class="label">إجمالي العمليات داخل الفترة</span>
-            <span id="repKpiEntries" class="value">—</span>
-          </div>
-          <div class="kpi">
-            <span class="label">إجمالي المدفوعات داخل الفترة</span>
-            <span id="repKpiPays" class="value">—</span>
-          </div>
-          <div class="kpi">
-            <span class="label">إجمالي (فلوس ليا) داخل الفترة</span>
-            <span id="repKpiReceivable" class="value">—</span>
-          </div>
-          <div class="kpi">
-            <span class="label">إجمالي (فلوس عليا) داخل الفترة</span>
-            <span id="repKpiPayable" class="value">—</span>
-          </div>
+function openPersonDetails(name, side = "all"){
+  const clean = (name || "").trim();
+  if(!clean) return;
+
+  showPage("ledger");
+  if(el("ledgerName")){
+    el("ledgerName").value = clean;
+
+    if(el("ledgerMode")){
+      if(side === "payable") el("ledgerMode").value = "supplier";
+      else if(side === "receivable") el("ledgerMode").value = "customer";
+      else el("ledgerMode").value = "all";
+    }
+
+    showLedger(clean);
+  }
+}
+
+/* -------------------- Ledger Preview -------------------- */
+function openLedgerPreview(){
+  const q = (el("ledgerName")?.value || "").trim();
+  const mode = getLedgerMode();
+
+  const entriesAll = STATE.entries.map(e => computeEntryView(e, STATE.payments));
+  const paysAll = STATE.payments;
+
+  const entries = entriesAll
+    .filter(e => !q ? true : (e.party || "").trim().toLowerCase().includes(q.toLowerCase()))
+    .filter(e => entryMatchesLedgerMode(e, mode))
+    .sort((a,b)=> (a.date || "").localeCompare(a.date || "") || (a.createdAt - a.createdAt));
+
+  const allowedEntryIds = new Set(entries.map(e => e.id));
+  const pays = paysAll
+    .filter(p => !q ? true : (p.party || "").trim().toLowerCase().includes(q.toLowerCase()))
+    .filter(p => allowedEntryIds.has(p.entryId))
+    .sort((a,b)=> (a.date || "").localeCompare(b.date || "") || (b.createdAt - b.createdAt));
+
+  const total = entries.reduce((a,e)=> a + (Number.isFinite(e.total) ? e.total : 0), 0);
+  const paid  = entries.reduce((a,e)=> a + (Number.isFinite(e.paid) ? e.paid : 0), 0);
+  const rem   = entries.reduce((a,e)=> a + (Number.isFinite(e.remaining) ? e.remaining : 0), 0);
+
+  const headerMode =
+    mode === "customer" ? "عملاء فقط" :
+    mode === "supplier" ? "موردين فقط" :
+    "الكل";
+
+  const titleName = q ? q : "بدون اسم (عرض الكل)";
+  el("prevLedgerMeta") && (el("prevLedgerMeta").textContent =
+    `الاسم: ${titleName} • الوضع: ${headerMode} • ${new Date().toLocaleString("ar-EG")}`
+  );
+
+  const paidLabel = (mode === "customer") ? "المدفوع (داخلة)" :
+                    (mode === "supplier") ? "المدفوع (خارجة)" :
+                    "المدفوع";
+
+  el("prevLedgerSummary") && (el("prevLedgerSummary").textContent =
+    `الإجمالي: ${fmt(total)} • ${paidLabel}: ${fmt(paid)} • المتبقي: ${fmt(rem)}`
+  );
+
+  const tbE = el("prevLedgerEntriesTbody");
+  if(tbE){
+    tbE.innerHTML = "";
+    if(entries.length === 0){
+      tbE.innerHTML = `<tr><td colspan="6">لا توجد عمليات مطابقة.</td></tr>`;
+    }else{
+      for(const e of entries){
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${e.date || "—"}</td>
+          <td>${typeLabel(e.type)}</td>
+          <td>${escapeHtml(e.desc || "—")}</td>
+          <td class="num">${fmt(e.total)}</td>
+          <td class="num">${fmt(e.paid)}</td>
+          <td class="num">${fmt(e.remaining)}</td>
+        `;
+        tbE.appendChild(tr);
+      }
+    }
+  }
+
+  const tbP = el("prevLedgerPaysTbody");
+  if(tbP){
+    tbP.innerHTML = "";
+    if(pays.length === 0){
+      tbP.innerHTML = `<tr><td colspan="3">لا توجد مدفوعات مطابقة.</td></tr>`;
+    }else{
+      for(const p of pays){
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${p.date || "—"}</td>
+          <td>${escapeHtml(`${p.note || "—"} • ${flowLabel(p.flow || "out")}`)}</td>
+          <td class="num">${fmt(p.amount)}</td>
+        `;
+        tbP.appendChild(tr);
+      }
+    }
+  }
+
+  showPage("ledgerPreview");
+}
+
+
+async function restoreTrashLogById(logId){
+  const logRaw = (Array.isArray(STATE.trash) ? STATE.trash : []).find(x => String(x.id) === String(logId));
+  if(!logRaw) return;
+
+  const log = normalizeTrashItem(logRaw);
+  if(!log) return;
+
+  const okPin = await pinConfirmModalOpen("استرجاع من المحذوفات");
+  if(!okPin) return;
+
+  const kindLabel = (log.type === "delete_entry") ? "عملية" : "دفعة";
+  if(!confirm(`متأكد استرجاع ${kindLabel}؟\nبعد الاسترجاع سيتم حذف هذا السطر من سجل المحذوفات.`)){
+    return;
+  }
+
+  // Restore
+  // ✅ لو شغال على Sheets: استخدم restoreTrash (Atomic) بدل إعادة إضافة صفوف متعددة
+  if(STORE && typeof STORE.restoreTrash === "function" && STORE.mode === "sheets"){
+    try{
+      const refTable = (log.type === "delete_entry") ? "Transactions" : "Payments";
+      const refId = String(log.refId || log.entrySnapshot?.id || log.paymentSnapshot?.id || "");
+      if(refId){
+        await STORE.restoreTrash(refTable, refId, { ...log });
+        await refresh(true);
+        return;
+      }
+    }catch(e){
+      console.error(e);
+      // fallback للمنطق القديم
+    }
+  }
+
+  if(log.type === "delete_entry"){
+    const entry = log.entrySnapshot || null;
+    const pays  = Array.isArray(log.paymentsSnapshot) ? log.paymentsSnapshot : [];
+
+    if(entry && entry.id){
+      const exists = STATE.entries.some(e => e.id === entry.id);
+      if(!exists){
+        try{ await STORE.addEntry(entry); }
+        catch(e){ console.error(e); showGlobalError("تعذر استرجاع العملية على الشيت. تم الاسترجاع محليًا إذا كان الوضع Offline."); }
+      }
+
+      // Restore payments (skip duplicates)
+      for(const p of pays){
+        if(!p || !p.id) continue;
+        const payExists = STATE.payments.some(x => x.id === p.id);
+        if(payExists) continue;
+        try{ await STORE.addPayment(p); }
+        catch(e){ console.error(e); showGlobalError("تعذر استرجاع بعض المدفوعات على الشيت. تم الاسترجاع محليًا إذا كان الوضع Offline."); }
+      }
+    }
+  }else{
+    const pay = log.paymentSnapshot || null;
+    if(pay && pay.id){
+      const payExists = STATE.payments.some(x => x.id === pay.id);
+      if(!payExists){
+        try{ await STORE.addPayment(pay); }
+        catch(e){ console.error(e); showGlobalError("تعذر استرجاع الدفعة على الشيت. تم الاسترجاع محليًا إذا كان الوضع Offline."); }
+      }
+    }
+  }
+
+  // Remove trash log after restore
+  try{
+    await STORE.deleteTrashLog(logId);
+  }catch(e){
+    console.error(e);
+    showGlobalError("تم الاسترجاع لكن تعذر حذف السطر من سجل المحذوفات على الشيت (قد يختفي محليًا فقط).");
+  }
+
+  await refresh(true);
+}
+
+/* -------------------- Trash Page -------------------- */
+function renderTrash(){
+  const tbody = el("trashTbody");
+  if(!tbody) return;
+
+  const q = (el("trashQ")?.value || "").trim().toLowerCase();
+  tbody.innerHTML = "";
+
+  const logs = Array.isArray(STATE.trash) ? STATE.trash : [];
+  const filtered = !q ? logs : logs.filter(item=>{
+    const kind = (item.type === "delete_entry" ? "حذف عملية" : "حذف دفعة");
+    const party =
+      item.type === "delete_entry"
+        ? (item.entrySnapshot?.party || "")
+        : (item.paymentSnapshot?.party || "");
+    const note =
+      item.type === "delete_entry"
+        ? (item.entrySnapshot?.desc || "")
+        : (item.paymentSnapshot?.note || "");
+    const blob = `${kind} ${party} ${note}`.toLowerCase();
+    return blob.includes(q);
+  });
+
+  if(filtered.length === 0){
+    tbody.innerHTML = `<tr><td colspan="6">لا توجد محذوفات مطابقة.</td></tr>`;
+    return;
+  }
+
+  for(const item of filtered){
+    const when = new Date(item.at).toLocaleString("ar-EG");
+    const kind = item.type === "delete_entry" ? "حذف عملية" : "حذف دفعة";
+    const party =
+      item.type === "delete_entry"
+        ? (item.entrySnapshot?.party || "—")
+        : (item.paymentSnapshot?.party || "—");
+
+    const amount =
+      item.type === "delete_entry"
+        ? (item.entrySnapshot?.total != null ? fmt(item.entrySnapshot.total) : "—")
+        : (item.paymentSnapshot?.amount != null ? fmt(item.paymentSnapshot.amount) : "—");
+
+    const note =
+      item.type === "delete_entry"
+        ? (item.entrySnapshot?.desc || "—")
+        : (item.paymentSnapshot?.note || "—");
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${when}</td>
+      <td>${kind}</td>
+      <td>${escapeHtml(party)}</td>
+      <td class="num">${escapeHtml(amount)}</td>
+      <td>${escapeHtml(note)}</td>
+      <td>
+        <div class="rowActions">
+          <button class="btn small" data-trashrestore="${item.id}">استرجاع</button>
+          <button class="btn small danger" data-trashdel="${item.id}">حذف نهائي</button>
         </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
 
-        <div class="tableWrap" style="margin-top:12px">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>النوع</th>
-                <th>الاسم/الجهة</th>
-                <th>الوصف</th>
-                <th class="num">الإجمالي</th>
-                <th class="num">المدفوع</th>
-                <th class="num">الباقي</th>
-              </tr>
-            </thead>
-            <tbody id="repEntriesTbody"></tbody>
-          </table>
-        </div>
+/* -------------------- Reports -------------------- */
+function toDateNum(iso){
+  const s = normalizeISODate(iso);
+  if(!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return NaN;
+  return Number(s.replaceAll("-", ""));
+}
+function clampDateRange(fromISO, toISO){
+  const f = toDateNum(fromISO);
+  const t = toDateNum(toISO);
+  if(!Number.isFinite(f) || !Number.isFinite(t)) return null;
+  if(f > t) return { fromISO: toISO, toISO: fromISO };
+  return { fromISO, toISO };
+}
+function presetRange(preset){
+  const today = todayISO();
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth()+1).padStart(2,"0");
+  const firstDayMonth = `${y}-${m}-01`;
+  const firstDayYear = `${y}-01-01`;
 
-        <div class="tableWrap" style="margin-top:12px">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>تاريخ الدفع</th>
-                <th>الاسم/الجهة</th>
-                <th>ملاحظة</th>
-                <th class="num">المبلغ</th>
-              </tr>
-            </thead>
-            <tbody id="repPaysTbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+  if(preset === "today") return { fromISO: today, toISO: today };
+  if(preset === "this_month") return { fromISO: firstDayMonth, toISO: today };
+  if(preset === "this_year") return { fromISO: firstDayYear, toISO: today };
 
-    <!-- ✅ PAGE: TRASH -->
-    <section id="page-trash" class="page" hidden>
-      <div class="pageHead">
-        <h2>سجل المحذوفات</h2>
-      </div>
+  if(preset === "last_7" || preset === "last_30"){
+    const days = preset === "last_7" ? 7 : 30;
+    const d = new Date();
+    d.setDate(d.getDate() - (days-1));
+    const from = d.toISOString().slice(0,10);
+    return { fromISO: from, toISO: today };
+  }
+  return null;
+}
+function filterEntriesByReportType(entriesView, repType){
+  if(repType === "all") return entriesView;
+  if(repType === "payments_out" || repType === "receipts_in") return [];
+  return entriesView.filter(e => e.type === repType);
+}
 
-      <div class="card">
-        <div class="toolbar">
-          <div class="filters">
-            <input id="trashQ" type="search" placeholder="بحث في المحذوفات بالاسم/الوصف..." />
-          </div>
-        </div>
+function renderReports(){
+  const hasUI = !!el("page-reports");
+  if(!hasUI) return;
 
-        <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>وقت الحذف</th>
-                <th>النوع</th>
-                <th>الاسم/الجهة</th>
-                <th class="num">المبلغ</th>
-                <th>سبب</th>
-                <th>إجراء</th>
-              </tr>
-            </thead>
-            <tbody id="trashTbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+  const entriesViewAll = STATE.entries.map(e => computeEntryView(e, STATE.payments));
+  const paymentsAll = STATE.payments;
 
-    <!-- ✅ PAGE: ENTRY PREVIEW -->
-    <section id="page-entryPreview" class="page" hidden>
-      <div class="previewWrap">
-        <div class="previewHead">
-          <h2>معاينة العملية</h2>
-          <div class="previewActions">
-            <button id="btnPrintEntry" class="btn ghost" type="button">طباعة / PDF</button>
-            <button id="btnBackFromEntryPreview" class="btn" type="button">رجوع</button>
-          </div>
-        </div>
+  const preset = el("repRangePreset")?.value || "custom";
+  const type = el("repType")?.value || "all";
+  const partyQ = (el("repParty")?.value || "").trim().toLowerCase();
 
-        <div class="printCard">
-          <div class="printHeader">
-            <div>
-              <div class="title">سوبر ماركت أولاد يحيى</div>
-              <div class="sub">إدارة هيثم</div>
-              <div class="miniMuted" id="prevEntryMeta">—</div>
-            </div>
-            <div class="miniMuted" id="prevEntryStatus">—</div>
-          </div>
+  let fromISO = el("repFrom")?.value || "";
+  let toISO   = el("repTo")?.value || "";
 
-          <div class="kvGrid">
-            <div class="kv"><div class="k">التاريخ</div><div class="v" id="prevDate">—</div></div>
-            <div class="kv"><div class="k">النوع</div><div class="v" id="prevType">—</div></div>
-            <div class="kv"><div class="k">الاسم/الجهة</div><div class="v" id="prevParty">—</div></div>
-            <div class="kv"><div class="k">الوصف</div><div class="v" id="prevDesc">—</div></div>
-            <div class="kv"><div class="k">التصنيف</div><div class="v" id="prevCat">—</div></div>
-            <div class="kv"><div class="k">ملاحظات</div><div class="v" id="prevNotes">—</div></div>
-            <div class="kv"><div class="k">الإجمالي</div><div class="v" id="prevTotal">—</div></div>
-            <div class="kv"><div class="k">مدفوع / باقي</div><div class="v" id="prevPaidRemain">—</div></div>
-          </div>
+  const pr = presetRange(preset);
+  if(pr){
+    fromISO = pr.fromISO;
+    toISO = pr.toISO;
+    if(el("repFrom")) el("repFrom").value = fromISO;
+    if(el("repTo")) el("repTo").value = toISO;
+  }
 
-          <div class="miniMuted" style="margin-top:12px">المدفوعات التابعة:</div>
-          <table class="miniTable" style="margin-top:8px">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>ملاحظة</th>
-                <th class="num">المبلغ</th>
-              </tr>
-            </thead>
-            <tbody id="prevPaysTbody"></tbody>
-          </table>
+  const rr = clampDateRange(fromISO, toISO);
+  const fromNum = rr ? toDateNum(rr.fromISO) : NaN;
+  const toNum   = rr ? toDateNum(rr.toISO) : NaN;
 
-          <div class="miniMuted">* للطباعة اختر Print → Save as PDF</div>
-        </div>
-      </div>
-    </section>
+  const inRange = (iso)=> {
+    const n = toDateNum(iso);
+    if(!Number.isFinite(fromNum) || !Number.isFinite(toNum)) return true;
+    return Number.isFinite(n) && n >= fromNum && n <= toNum;
+  };
 
-    <!-- ✅ PAGE: LEDGER PREVIEW -->
-    <section id="page-ledgerPreview" class="page" hidden>
-      <div class="previewWrap">
-        <div class="previewHead">
-          <h2>معاينة كشف الحساب</h2>
-          <div class="previewActions">
-            <button id="btnPrintLedger" class="btn ghost" type="button">طباعة / PDF</button>
-            <button id="btnBackFromLedgerPreview" class="btn" type="button">رجوع</button>
-          </div>
-        </div>
+  let entries = entriesViewAll.filter(e => inRange(e.date));
+  if(partyQ){
+    entries = entries.filter(e =>
+      (e.party || "").toLowerCase().includes(partyQ) ||
+      (e.desc || "").toLowerCase().includes(partyQ) ||
+      (e.notes || "").toLowerCase().includes(partyQ)
+    );
+  }
 
-        <div class="printCard">
-          <div class="printHeader">
-            <div>
-              <div class="title">سوبر ماركت أولاد يحيى</div>
-              <div class="sub">إدارة هيثم</div>
-              <div class="miniMuted" id="prevLedgerMeta">—</div>
-            </div>
-            <div class="miniMuted" id="prevLedgerSummary">—</div>
-          </div>
+  const entriesAfterType = filterEntriesByReportType(entries, type);
 
-          <div class="miniMuted">تفاصيل العمليات:</div>
-          <table class="miniTable" style="margin-top:8px">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>النوع</th>
-                <th>الوصف</th>
-                <th class="num">الإجمالي</th>
-                <th class="num">المدفوع</th>
-                <th class="num">الباقي</th>
-              </tr>
-            </thead>
-            <tbody id="prevLedgerEntriesTbody"></tbody>
-          </table>
+  let pays = paymentsAll.filter(p => inRange(p.date));
+  if(partyQ){
+    pays = pays.filter(p =>
+      (p.party || "").toLowerCase().includes(partyQ) ||
+      (p.note || "").toLowerCase().includes(partyQ)
+    );
+  }
 
-          <div class="miniMuted" style="margin-top:12px">تفاصيل المدفوعات:</div>
-          <table class="miniTable" style="margin-top:8px">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>ملاحظة</th>
-                <th class="num">المبلغ</th>
-              </tr>
-            </thead>
-            <tbody id="prevLedgerPaysTbody"></tbody>
-          </table>
+  if(type === "payments_out") pays = pays.filter(p => (p.flow || "out") === "out");
+  if(type === "receipts_in") pays = pays.filter(p => (p.flow || "out") === "in");
 
-          <div class="miniMuted">* للطباعة اختر Print → Save as PDF</div>
-        </div>
-      </div>
-    </section>
+  const repEntriesCount = entriesAfterType.length;
+  const repPaysTotal = pays.reduce((a,p)=> a + Number(p.amount || 0), 0);
 
-  </main>
+  const repReceivable = entriesAfterType
+    .filter(e => e.side === "receivable")
+    .reduce((a,e)=> a + (Number.isFinite(e.remaining) ? e.remaining : 0), 0);
 
-  <!-- ✅ Footer (زي ما كان) -->
-  <footer class="footer2">
-    <div>© Axentro — All Rights Reserved 2024</div>
-    <div class="muted2">By Ahmed Hamouda</div>
-  </footer>
+  const repPayable = entriesAfterType
+    .filter(e => e.side === "payable")
+    .reduce((a,e)=> a + (Number.isFinite(e.remaining) ? e.remaining : 0), 0);
 
-  <!-- ✅ QR تحت الفوتر (هيظهر في الطباعة/PDF) -->
-  <div class="qrFooter">
-    <img src="images/qr.png" alt="QR Code" />
-  </div>
+  el("repKpiEntries") && (el("repKpiEntries").textContent = repEntriesCount.toLocaleString("ar-EG"));
+  el("repKpiPays") && (el("repKpiPays").textContent = fmt(repPaysTotal));
+  el("repKpiReceivable") && (el("repKpiReceivable").textContent = fmt(repReceivable));
+  el("repKpiPayable") && (el("repKpiPayable").textContent = fmt(repPayable));
 
-  <!-- ✅ Modal: Add Payment -->
-  <div id="payModal" class="modal" hidden>
-    <div class="modalCard">
-      <div class="modalHead">
-        <h3>إضافة دفعة</h3>
-        <button id="payClose" class="btn small" type="button">إغلاق</button>
-      </div>
+  const repEntriesTbody = el("repEntriesTbody");
+  if(repEntriesTbody){
+    repEntriesTbody.innerHTML = "";
+    const sorted = [...entriesAfterType].sort((a,b)=>
+      (b.date || "").localeCompare(a.date || "") || (b.createdAt - a.createdAt)
+    );
 
-      <div class="modalBody">
-        <div class="field">
-          <label>تاريخ الدفع</label>
-          <input id="payDate" type="date" />
-          <div class="help">التعليمات: اختار تاريخ الدفعة.</div>
-        </div>
+    if(sorted.length === 0){
+      repEntriesTbody.innerHTML = `<tr><td colspan="7">لا توجد عمليات داخل هذه الفلاتر.</td></tr>`;
+    }else{
+      for(const e of sorted){
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${e.date || "—"}</td>
+          <td><span class="badge">${typeLabel(e.type)}</span></td>
+          <td>${escapeHtml(e.party || "—")}</td>
+          <td>${escapeHtml(e.desc || "—")}</td>
+          <td class="num">${fmt(e.total)}</td>
+          <td class="num">${fmt(e.paid)}</td>
+          <td class="num">${fmt(e.remaining)}</td>
+        `;
+        repEntriesTbody.appendChild(tr);
+      }
+    }
+  }
 
-        <div class="field">
-          <label>المبلغ (جنيه)</label>
-          <input id="payAmount" type="number" min="0" step="0.01" placeholder="مثال: 200" />
-          <div class="help">التعليمات: اكتب قيمة الدفعة.</div>
-        </div>
+  const repPaysTbody = el("repPaysTbody");
+  if(repPaysTbody){
+    repPaysTbody.innerHTML = "";
+    const sortedPays = [...pays].sort((a,b)=>
+      (b.date || "").localeCompare(a.date || "") || (b.createdAt - a.createdAt)
+    );
 
-        <div class="field">
-          <label>ملاحظة (اختياري)</label>
-          <input id="payNote" type="text" placeholder="مثال: تحويل فودافون كاش" />
-          <div class="help">التعليمات: أي توضيح لطريقة الدفع أو سبب الدفعة.</div>
-        </div>
-
-        <button id="paySave" class="btn primary" type="button">حفظ الدفعة</button>
-        <div id="payError" class="error" hidden>من فضلك املأ تاريخ الدفع والمبلغ.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ✅ Modal: PIN Confirm (for delete) -->
-  <div id="pinConfirmModal" class="modal" hidden>
-    <div class="modalCard">
-      <div class="modalHead">
-        <h3>تأكيد الحذف</h3>
-        <button id="pinConfirmClose" class="btn small" type="button">إغلاق</button>
-      </div>
-
-      <div class="modalBody">
-        <div class="field">
-          <label>أدخل PIN (1234) لإتمام الحذف</label>
-          <input id="pinConfirmInput" type="password" inputmode="numeric" placeholder="PIN" />
-          <div class="help">التعليمات: لن يتم الحذف إلا بعد إدخال PIN الصحيح.</div>
-        </div>
-
-        <button id="pinConfirmOk" class="btn danger" type="button">تأكيد الحذف</button>
-        <div id="pinConfirmError" class="error" hidden>PIN غير صحيح.</div>
-      </div>
-    </div>
-  </div>
+    if(sortedPays.length === 0){
+      repPaysTbody.innerHTML = `<tr><td colspan="4">لا توجد مدفوعات داخل هذه الفلاتر.</td></tr>`;
+    }else{
+      for(const p of sortedPays){
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${p.date || "—"}</td>
+          <td>${escapeHtml(p.party || "—")}</td>
+          <td>${escapeHtml(`${p.note || "—"} • ${flowLabel(p.flow || "out")}`)}</td>
+          <td class="num">${fmt(p.amount)}</td>
+        `;
+        repPaysTbody.appendChild(tr);
+      }
+    }
+  }
+}
 
 
-  <!-- ✅ Print Header (يظهر في الطباعة فقط) -->
-  <div id="printHeader" class="printHeaderBar" hidden>
-    <div class="phLeft">
-      <div class="phShop">سوبر ماركت أولاد يحيى</div>
-      <div class="phAdmin">إدارة هيثم</div>
-    </div>
-    <div class="phRight">
-      <div id="printHeaderTitle" class="phTitle">—</div>
-      <div id="printHeaderMeta" class="phMeta">—</div>
-    </div>
-  </div>
 
-  <!-- ✅ Loading Overlay (يظهر أثناء تحديث البيانات) -->
-  <div id="loadingOverlay" class="loadingOverlay" hidden>
-    <div class="loadingCard">
-      <div class="spinner"></div>
-      <div id="loadingOverlayText" class="loadingText">جارِ تحديث البيانات…</div>
-      <div class="loadingSub">من فضلك انتظر لحظات</div>
-    </div>
-  </div>
+/* -------------------- ✅ Store Mode Badge (Local / Sheets) -------------------- */
+let __storeStatus = { mode: null, note: "" };
 
-  
-  <script>
-    // ✅ Google Login button (placeholder)
-    document.addEventListener("DOMContentLoaded", () => {
-      const btn = document.getElementById("googleLoginBtn");
-      if(!btn) return;
-      btn.addEventListener("click", () => {
-        alert("قريبًا: سيتم تفعيل تسجيل الدخول بجوجل بعد إعداد الـ Apps Script الجديد والـ Allowlist.");
+function ensureStoreBadge(){
+  if(document.getElementById("storeModeBadge")) return;
+
+  const b = document.createElement("div");
+  b.id = "storeModeBadge";
+
+  // ✅ base style (will be positioned safely by positionStoreBadge)
+  b.style.position = "fixed";
+  b.style.top = "10px";
+  b.style.left = "10px";
+  b.style.zIndex = "9998";
+  b.style.padding = "6px 10px";
+  b.style.borderRadius = "999px";
+  b.style.fontSize = "12px";
+  b.style.fontWeight = "800";
+  b.style.background = "rgba(0,0,0,.35)";
+  b.style.border = "1px solid rgba(255,255,255,.12)";
+  b.style.backdropFilter = "blur(6px)";
+  b.style.userSelect = "none";
+  b.style.cursor = "help";
+  b.style.maxWidth = "70vw";
+  b.style.whiteSpace = "nowrap";
+  b.style.overflow = "hidden";
+  b.style.textOverflow = "ellipsis";
+
+  b.textContent = "● …";
+  document.body.appendChild(b);
+
+  // لا نستخدم alert — فقط title
+  b.addEventListener("click", ()=>{});
+
+  // position now + on resize/orientation
+  positionStoreBadge();
+  window.addEventListener("resize", positionStoreBadge, { passive:true });
+  window.addEventListener("orientationchange", positionStoreBadge, { passive:true });
+}
+
+function positionStoreBadge(){
+  const b = document.getElementById("storeModeBadge");
+  if(!b) return;
+
+  // ✅ default (top-left)
+  b.style.top = "10px";
+  b.style.left = "10px";
+  b.style.right = "auto";
+
+  // ✅ if RTL UI & better spacing, keep it on the far edge away from actions when possible
+  const isSmall = window.matchMedia && window.matchMedia("(max-width: 520px)").matches;
+
+  // Try to avoid overlap with Logout button
+  const logout = document.getElementById("btnLogout");
+  if(logout){
+    const r1 = b.getBoundingClientRect();
+    const r2 = logout.getBoundingClientRect();
+    const overlap = !(r1.right < r2.left || r1.left > r2.right || r1.bottom < r2.top || r1.top > r2.bottom);
+
+    if(overlap){
+      // Move badge below Logout button
+      const top = Math.round(r2.bottom + 8);
+      b.style.top = top + "px";
+      b.style.left = "10px";
+      b.style.right = "auto";
+    }
+  }
+
+  // ✅ On very small screens: prefer placing it to the far right (away from left actions)
+  if(isSmall){
+    // If there is an info button on the right, keep some margin
+    b.style.left = "auto";
+    b.style.right = "10px";
+
+    // Re-check overlap with logout when moved
+    const logout2 = document.getElementById("btnLogout");
+    if(logout2){
+      const r1 = b.getBoundingClientRect();
+      const r2 = logout2.getBoundingClientRect();
+      const overlap = !(r1.right < r2.left || r1.left > r2.right || r1.bottom < r2.top || r1.top > r2.bottom);
+      if(overlap){
+        const top = Math.round(r2.bottom + 8);
+        b.style.top = top + "px";
+        b.style.left = "auto";
+        b.style.right = "10px";
+      }
+    }
+  }
+}
+
+function setStoreStatus(mode, note = ""){
+  __storeStatus.mode = mode;
+  __storeStatus.note = note || "";
+  const b = document.getElementById("storeModeBadge");
+  if(!b) return;
+
+  const label = (mode === "sheets") ? "Sheets" : "Local";
+  b.textContent = `● ${label}`;
+  b.title = mode === "sheets"
+    ? "المصدر: Google Sheets (متصل)"
+    : ("المصدر: LocalStorage (Offline/تعذر الشيت)" + (__storeStatus.note ? `\nالسبب: ${__storeStatus.note}` : ""));
+}
+/* --------------------------------------------------------------------------- */
+
+/* -------------------- Loading State (خفيف) -------------------- */
+function setLoading(isLoading){
+  document.documentElement.classList.toggle("isLoading", !!isLoading);
+}
+
+/* ✅ Loading Overlay (جارِ تحديث البيانات) */
+function showOverlay(text){
+  const ov = document.getElementById("loadingOverlay");
+  if(!ov) return;
+  const t = document.getElementById("loadingOverlayText");
+  if(t && text) t.textContent = text;
+  ov.hidden = false;
+}
+function hideOverlay(){
+  const ov = document.getElementById("loadingOverlay");
+  if(!ov) return;
+  ov.hidden = true;
+}
+
+/* ===================== UX Helpers ===================== */
+async function withButtonBusy_(btn, busyText, fn){
+  const hasBtn = !!btn;
+  const prevDisabled = hasBtn ? btn.disabled : false;
+  const prevText = hasBtn ? btn.textContent : "";
+  try{
+    if(hasBtn){
+      btn.disabled = true;
+      if(busyText) btn.textContent = busyText;
+    }
+    return await fn();
+  }finally{
+    if(hasBtn){
+      btn.disabled = prevDisabled;
+      btn.textContent = prevText;
+    }
+  }
+}
+
+function setFormDisabled_(form, disabled){
+  if(!form) return;
+  const els = form.querySelectorAll("input, select, textarea, button");
+  els.forEach(el => { el.disabled = !!disabled; });
+}
+
+/* ✅ ضمان إن الأوفرلاي ينتهي بعد آخر Render/Paint فعلي */
+
+function nextPaint(){
+  return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+}
+
+/* -------------------- Refresh (تحميل من الشيت) -------------------- */
+let __refreshLock = false;
+
+/* ✅ بصمة بسيطة لتقليل إعادة الرندر لو الداتا لم تتغير */
+function fingerprintState(entries, payments, trash){
+  const maxCreated = (arr)=> (Array.isArray(arr) && arr.length)
+    ? Math.max(...arr.map(x=> Number(x?.createdAt || x?.at || 0)))
+    : 0;
+  return [
+    Array.isArray(entries)? entries.length:0,
+    Array.isArray(payments)? payments.length:0,
+    Array.isArray(trash)? trash.length:0,
+    maxCreated(entries),
+    maxCreated(payments),
+    maxCreated(trash)
+  ].join("|");
+}
+
+function fingerprintSlice(arr){
+  const a = Array.isArray(arr) ? arr : [];
+  const len = a.length;
+  let maxT = 0;
+  let lastId = "";
+  for(const x of a){
+    const t = Number(x?.createdAt || x?.at || 0);
+    if(Number.isFinite(t) && t > maxT) maxT = t;
+    if(!lastId && x?.id) lastId = String(x.id);
+  }
+  return `${len}|${maxT}|${lastId}`;
+}
+
+
+async function refresh(forceNetwork = false){
+  if(__refreshLock) return;
+  __refreshLock = true;
+
+  try{
+    showOverlay("جارِ تحديث البيانات…");
+    setLoading(true);
+    hideGlobalError();
+
+    // ✅ Badge
+    ensureStoreBadge();
+    setStoreStatus(STORE.mode, "");
+
+    // ✅ اعرض المحلي الأول دائمًا (يمنع اختفاء الأرقام بعد Refresh)
+    const local = await STORE.local.getAll();
+    STATE.entries  = Array.isArray(local.entries) ? local.entries : [];
+    STATE.payments = Array.isArray(local.payments) ? local.payments : [];
+    STATE.trash    = normalizeTrash(Array.isArray(local.trash) ? local.trash : []);
+
+    // ✅ تطبيع التواريخ + تدفقات المدفوعات
+    STATE.entries  = (STATE.entries || []).map(e => ({...e, date: normalizeISODate(e.date)}));
+    STATE.payments = (STATE.payments || []).map(p => ({
+      ...p,
+      date: normalizeISODate(p.date),
+      flow: (p.flow === "in" || p.flow === "out") ? p.flow : "out"
+    })).filter(p => !isRowDeleted(p));
+
+    await renderFromState();
+
+    // ✅ لو مش مطلوب تحميل من الشيت، نكتفي بالمحلي
+    if(!forceNetwork){
+      return;
+    }
+
+    const before = {
+      entries: fingerprintSlice(STATE.entries),
+      payments: fingerprintSlice(STATE.payments),
+      trash: fingerprintSlice(STATE.trash)
+    };
+
+    const all = await STORE.getAll();
+
+    const payments = (all.payments || []).map(p => ({
+      ...p,
+      flow: (p.flow === "in" || p.flow === "out") ? p.flow : "out"
+    }));
+
+    STATE.entries  = Array.isArray(all.entries) ? all.entries : [];
+    STATE.payments = payments;
+    STATE.trash    = normalizeTrash(Array.isArray(all.trash) ? all.trash : []);
+
+    STATE.entries  = (STATE.entries || []).map(e => ({...e, date: normalizeISODate(e.date)}));
+    STATE.payments = (STATE.payments || []).map(p => ({...p, date: normalizeISODate(p.date)})).filter(p => !isRowDeleted(p));
+
+    // ✅ Update badge
+    setStoreStatus(STORE.mode, "");
+
+    const after = {
+      entries: fingerprintSlice(STATE.entries),
+      payments: fingerprintSlice(STATE.payments),
+      trash: fingerprintSlice(STATE.trash)
+    };
+
+    const entriesChanged  = before.entries  !== after.entries;
+    const paymentsChanged = before.payments !== after.payments;
+    const trashChanged    = before.trash    !== after.trash;
+
+    // ✅ Diff-based: لو مفيش تغيير، لا تعيد الرندر
+    if(!(entriesChanged || paymentsChanged || trashChanged)){
+      return;
+    }
+
+    // ✅ Partial render حسب التغيير
+    await renderFromStatePartial({ entriesChanged, paymentsChanged, trashChanged });
+    hideGlobalError();
+
+  }catch(e){
+    console.error(e);
+    // ✅ Update badge to local with note
+    const note = String(e?.message || e || "").slice(0, 120);
+    setStoreStatus("local", note);
+    try{
+      const k = "__oy_offline_notice_shown";
+      if(!sessionStorage.getItem(k)){
+        sessionStorage.setItem(k, "1");
+        showGlobalError("⚠️ تعذر الاتصال بالشيت. سيتم استخدام التخزين المحلي مؤقتًا حتى يعود الاتصال.");
+      }
+    }catch(_e){}
+
+    const msg =
+      (STORE.mode === "local")
+        ? "تعذر تحميل البيانات من الشيت. جاري استخدام التخزين المحلي مؤقتًا."
+        : "حصلت مشكلة في تحميل البيانات. تأكد إن Web App شغال وبعدين اضغط إعادة المحاولة.";
+    showGlobalError(msg);
+  }finally{
+    await nextPaint();
+    hideOverlay();
+    setLoading(false);
+    __refreshLock = false;
+  }
+}
+
+
+/* -------------------- DOM Events -------------------- */
+document.addEventListener("DOMContentLoaded", async () => {
+  try{
+    ensureGlobalBanner();
+    setupPinGate();
+
+    ensureStoreBadge();
+    setStoreStatus(STORE.mode, "");
+
+    if(isAuthed()){
+      document.documentElement.classList.add("authed");
+
+try{
+  const sp = sessionStorage.getItem("oy_pin");
+  if(sp && API_CFG) API_CFG.pin = sp;
+}catch(_){}
+
+      openApp();
+
+      try{ await STORE.init(); }
+      catch(e){
+        console.error(e);
+        setStoreStatus("local", "تعذر التهيئة");
+        showGlobalError("تعذر تهيئة التخزين على الشيت. سيتم استخدام التخزين المحلي مؤقتًا.");
+      }
+
+      await refresh(true);
+    }
+
+    document.querySelectorAll(".navBtn").forEach(btn=>{
+      btn.addEventListener("click", ()=> showPage(btn.dataset.page));
+    });
+
+    el("btnLogout")?.addEventListener("click", ()=>{
+      if(confirm("هل تريد تسجيل الخروج؟")){
+        setAuthed(false);
+        closeApp();
+      }
+    });
+
+    el("btnPrint")?.addEventListener("click", ()=>{
+      preparePrintForCurrentPage();
+      window.print();
+    });
+
+    // ✅ Preview pages buttons (Back / Print)
+    el("btnBackFromEntryPreview")?.addEventListener("click", ()=> showPage("records"));
+    el("btnPrintEntry")?.addEventListener("click", ()=>{ preparePrintForCurrentPage(); window.print(); });
+    el("btnBackFromLedgerPreview")?.addEventListener("click", ()=> showPage("ledger"));
+    el("btnPrintLedger")?.addEventListener("click", ()=>{ preparePrintForCurrentPage(); window.print(); });
+
+    // ✅ Add Entry
+    el("entryForm")?.addEventListener("submit", async (ev)=>{
+      ev.preventDefault();
+      hideGlobalError();
+
+      const form = ev.currentTarget;
+      const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+
+      await withButtonBusy_(submitBtn, "جاري الحفظ...", async ()=>{
+        const { entry, firstPay } = getEntryFromForm();
+        const err = validateEntry(entry);
+        if(err){ alert(err); return; }
+
+        if(firstPay !== null && firstPay > entry.total){
+          alert("الدفعة الأولى لا يمكن أن تتجاوز الإجمالي.");
+          return;
+        }
+
+        try{
+          await STORE.addEntry(entry);
+
+          if(firstPay !== null && entry.type !== "expense"){
+            const side = moneySide(entry.type);
+            const flow = (side === "receivable") ? "in" : "out";
+
+            await STORE.addPayment({
+              id: uid(),
+              entryId: entry.id,
+              date: entry.date,
+              party: entry.party,
+              amount: firstPay,
+              note: "دفعة أولى",
+              flow,
+              createdAt: Date.now()
+            });
+          }
+
+          resetForm();
+          await refresh(true);
+
+        }catch(e){
+          console.error(e);
+          showGlobalError("تعذر حفظ العملية على الشيت. تم الحفظ محليًا إذا كان الوضع Offline.");
+          requestRender();
+        }
       });
     });
-  </script>
 
-<script src="app.js"></script>
-</body>
-</html>
+    el("btnReset")?.addEventListener("click", resetForm);
+
+    // ✅✅✅ سرعة: الفلاتر تعمل render فقط (مجدول)
+    ["q","filterType","filterOpen"].forEach(id=>{
+      el(id)?.addEventListener("input", scheduleRender);
+      el(id)?.addEventListener("change", scheduleRender);
+    });
+    el("payQ")?.addEventListener("input", scheduleRender);
+    el("trashQ")?.addEventListener("input", scheduleRender);
+
+    // Reports
+    el("btnRunReports")?.addEventListener("click", renderReports);
+    el("btnPrintReports")?.addEventListener("click", ()=>{ preparePrintForCurrentPage(); window.print(); });
+    el("repRangePreset")?.addEventListener("change", renderReports);
+    el("repFrom")?.addEventListener("change", renderReports);
+    el("repTo")?.addEventListener("change", renderReports);
+    el("repType")?.addEventListener("change", renderReports);
+    el("repParty")?.addEventListener("input", ()=>{
+      clearTimeout(ledgerTimer);
+      ledgerTimer = setTimeout(renderReports, 250);
+    });
+
+    // Table actions
+    el("tbody")?.addEventListener("click", async (ev)=>{
+      const btn = ev.target.closest("button");
+      if(!btn) return;
+
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+
+      if(act === "del"){
+        const okPin = await pinConfirmModalOpen("الحذف");
+        if(!okPin) return;
+
+        await withButtonBusy_(btn, "جاري الحذف...", async ()=>{
+          if(confirm("متأكد حذف العملية؟ (سيتم حذف المدفوعات التابعة لها أيضًا)")){
+            const entry = STATE.entries.find(e => e.id === id) || null;
+            const pays = STATE.payments.filter(p => p.entryId === id);
+
+            try{
+              await STORE.deleteEntry(id, { entrySnapshot: entry, paymentsSnapshot: pays });
+            }catch(e){
+              console.error(e);
+              showGlobalError("تعذر الحذف على الشيت. تم تنفيذ الحذف محليًا إذا كان الوضع Offline.");
+            }
+
+            await refresh(true);
+          }
+        });
+
+        return;
+      }
+
+      if(act === "pay"){ openPayModal(id); return; }
+      if(act === "preview"){ openEntryPreview(id); return; }
+
+      if(act === "person"){
+        const name = btn.dataset.name || "";
+        const side = btn.dataset.side || "all";
+        openPersonDetails(name, side);
+      }
+    });
+
+    // Ledger
+    el("btnLedger")?.addEventListener("click", ()=> showLedger(el("ledgerName")?.value || ""));
+    el("ledgerMode")?.addEventListener("change", ()=> showLedger(el("ledgerName")?.value || ""));
+    el("ledgerName")?.addEventListener("input", ()=>{
+      clearTimeout(ledgerTimer);
+      ledgerTimer = setTimeout(()=> showLedger(el("ledgerName").value), 250);
+    });
+    el("btnLedgerPreview")?.addEventListener("click", openLedgerPreview);
+
+    // Payment modal
+    el("payClose")?.addEventListener("click", closePayModal);
+    el("payModal")?.addEventListener("click", (ev)=>{ if(ev.target === el("payModal")) closePayModal(); });
+
+    el("paySave")?.addEventListener("click", async ()=>{
+      const btn = el("paySave");
+      await withButtonBusy_(btn, "جارِ حفظ الدفعة...", async ()=>{
+
+        const entry = STATE.entries.find(e => e.id === CURRENT_PAY_ENTRY_ID);
+        if(!entry) return closePayModal();
+
+        if(entry.type === "expense"){
+          alert("المصروف لا يحتاج دفعات.");
+          return closePayModal();
+        }
+
+        const date = (el("payDate")?.value || "").trim();
+        const amount = (el("payAmount")?.value === "" || el("payAmount") == null) ? null : Number(el("payAmount").value);
+        const note = (el("payNote")?.value || "").trim();
+        const flow = (el("payFlow")?.value || "out").trim();
+
+        if(!date || amount === null || !Number.isFinite(amount) || amount <= 0){
+          el("payError") && (el("payError").hidden = false);
+          return;
+        }
+
+        const side = moneySide(entry.type);
+        const affectingFlow = (side === "receivable") ? "in" : "out";
+
+        if(flow === affectingFlow && Number.isFinite(entry.total)){
+          const alreadyAffecting = sumPaymentsForEntry(entry.id, STATE.payments, affectingFlow);
+          if((alreadyAffecting + amount) > Number(entry.total) + 1e-9){
+            alert(`لا يمكن أن تتجاوز الدفعات المؤثرة إجمالي العملية.\nالمدفوع حاليًا: ${fmt(alreadyAffecting)}\nالإجمالي: ${fmt(entry.total)}`);
+            return;
+          }
+        }
+
+        try{
+          await STORE.addPayment({
+            id: uid(),
+            entryId: entry.id,
+            date,
+            party: entry.party,
+            amount,
+            note,
+            flow: (flow === "in" ? "in" : "out"),
+            createdAt: Date.now()
+          });
+        }catch(e){
+          console.error(e);
+          showGlobalError("تعذر حفظ الدفعة على الشيت. تم الحفظ محليًا إذا كان الوضع Offline.");
+        }
+
+        closePayModal();
+        await refresh(true);
+      });
+    });
+
+    // Delete payment
+    el("payTbody")?.addEventListener("click", async (ev)=>{
+      const btn = ev.target.closest("button");
+      if(!btn) return;
+      const payId = btn.dataset.paydel;
+      if(!payId) return;
+
+      const okPin = await pinConfirmModalOpen("حذف الدفعة");
+      if(!okPin) return;
+
+      await withButtonBusy_(btn, "جاري حذف الدفعة...", async ()=>{
+      if(confirm("متأكد حذف الدفعة؟")){
+        const pay = STATE.payments.find(p => p.id === payId) || null;
+
+        try{ await STORE.deletePayment(payId, { paymentSnapshot: pay }); }
+        catch(e){
+          console.error(e);
+          showGlobalError("تعذر حذف الدفعة على الشيت. تم تنفيذ الحذف محليًا إذا كان الوضع Offline.");
+        }
+
+        await refresh(true);
+      }
+      });
+    });
+
+    // Trash delete forever
+    el("trashTbody")?.addEventListener("click", async (ev)=>{
+      const btn = ev.target.closest("button");
+      if(!btn) return;
+
+      const restoreId = btn.dataset.trashrestore;
+      if(restoreId){
+        await withButtonBusy_(btn, "جاري الاسترجاع...", async ()=>{
+          await restoreTrashLogById(restoreId);
+        });
+        return;
+      }
+
+      const delId = btn.dataset.trashdel;
+      if(!delId) return;
+
+      const okPin = await pinConfirmModalOpen("الحذف النهائي من سجل المحذوفات");
+      if(!okPin) return;
+
+      await withButtonBusy_(btn, "جاري الحذف...", async ()=>{
+      if(confirm("متأكد حذف نهائي؟ لن يمكن استرجاع هذا السطر.")){
+        try{
+          await STORE.deleteTrashLog(delId);
+          STATE.trash = normalizeTrash(await STORE.getTrash());
+          renderTrash();
+        }catch(e){
+          console.error(e);
+          showGlobalError("تعذر حذف السطر من الشيت. تم الحذف محليًا إذا كان الوضع Offline.");
+        }
+      }
+      });
+    });
+
+
+  }catch(e){
+    console.error(e);
+    showGlobalError("فيه خطأ حصل في تشغيل الصفحة. جرّب تحديث الصفحة أو امسح كاش الموقع.");
+  }
+});

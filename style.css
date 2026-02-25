@@ -1,906 +1,656 @@
-:root{
-  --bg:#0b1220;
-  --card:#0f1a2e;
-  --card2:#0c1629;
-  --text:#e7eefc;
-  --muted:#a9b7d0;
-  --stroke:rgba(255,255,255,.10);
-  --shadow:0 18px 50px rgba(0,0,0,.45);
-  --radius:18px;
-}
-
-*{box-sizing:border-box}
-html,body{height:100%}
-body{
-  margin:0;
-  font-family: system-ui, -apple-system, "Segoe UI", Tahoma, Arial;
-  background: radial-gradient(1200px 700px at 80% -10%, rgba(92,124,250,.22), transparent 60%),
-              radial-gradient(900px 650px at 10% 10%, rgba(0,188,212,.16), transparent 55%),
-              var(--bg);
-  color:var(--text);
-}
-
-/* ✅ Header */
-.topbar{
-  position:sticky; top:0; z-index:10;
-  display:flex; gap:12px; align-items:center; justify-content:space-between;
-  padding:14px 16px;
-  background: rgba(11,18,32,.75);
-  backdrop-filter: blur(10px);
-  border-bottom:1px solid var(--stroke);
-}
-
-.brand{display:flex; gap:12px; align-items:center}
-.logo{
-  width:42px; height:42px; border-radius:14px;
-  display:grid; place-items:center;
-  background: linear-gradient(135deg, rgba(92,124,250,.9), rgba(0,188,212,.75));
-  font-weight:800;
-}
-h1{margin:0; font-size:18px; line-height:1.1}
-.brand p{margin:2px 0 0; color:var(--muted); font-size:12px}
-
-.actions{display:flex; gap:8px; flex-wrap:wrap}
-
-/* ✅ admin tag (إدارة هيثم جنب الاسم بخط صغير) */
-.adminTag{
-  display:inline-block;
-  margin-inline-start:10px;
-  padding:3px 10px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.04);
-  color: rgba(231,238,252,.88);
-  font-size:12px;
-  font-weight:800;
-  vertical-align: middle;
-}
-
-/* ✅ Container */
-.container{max-width:1200px; margin:18px auto; padding:0 14px 28px}
-
-/* ✅ Dashboard grid */
-.grid{
-  display:grid;
-  grid-template-columns: 1fr 1.2fr;
-  gap:14px;
-}
-@media (max-width: 980px){ .grid{grid-template-columns:1fr} }
-
-/* ✅ Cards */
-.card{
-  background: linear-gradient(180deg, rgba(15,26,46,.92), rgba(12,22,41,.92));
-  border:1px solid var(--stroke);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding:14px;
-}
-
-.card h2{margin:0 0 12px; font-size:16px}
-
-/* ✅ KPIs */
-.kpis{
-  display:grid;
-  grid-template-columns: repeat(2, minmax(0,1fr));
-  gap:10px;
-}
-.kpi{
-  background: rgba(255,255,255,.05);
-  border:1px solid var(--stroke);
-  border-radius: 14px;
-  padding:10px;
-}
-.kpi .label{display:block; color:var(--muted); font-size:12px}
-.kpi .value{display:block; font-size:18px; font-weight:800; margin-top:6px}
-
-/* ✅ Forms */
-.form .row{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px}
-@media (max-width: 560px){ .form .row{grid-template-columns:1fr} }
-
-.field label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px}
-input, select{
-  width:100%;
-  padding:11px 12px;
-  border-radius: 14px;
-  border:1px solid var(--stroke);
-  background: rgba(255,255,255,.04);
-  color: var(--text);
-  outline: none;
-}
-input::placeholder{color: rgba(169,183,208,.7)}
-
-.help{
-  margin-top:6px;
-  color: rgba(169,183,208,.85);
-  font-size: 12px;
-  line-height: 1.35;
-}
-.hint{margin:8px 0 0; color:var(--muted); font-size:12px}
-
-/* ✅ Buttons */
-.btn{
-  padding:10px 12px;
-  border-radius: 14px;
-  border:1px solid var(--stroke);
-  background: rgba(255,255,255,.05);
-  color: var(--text);
-  cursor:pointer;
-  font-weight:700;
-}
-.btn:hover{filter: brightness(1.08)}
-.btn.primary{
-  border-color: rgba(92,124,250,.55);
-  background: linear-gradient(135deg, rgba(92,124,250,.85), rgba(0,188,212,.70));
-}
-.btn.ghost{background: rgba(255,255,255,.03)}
-.btn.danger{
-  border-color: rgba(255,80,80,.55);
-  background: rgba(255,80,80,.10);
-}
-.small{padding:7px 9px; font-size:12px; border-radius:12px}
-
-/* ✅ Toolbar + Filters */
-.toolbar{
-  display:flex; align-items:center; justify-content:space-between;
-  gap:10px; flex-wrap:wrap;
-}
-.filters{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
-.filters input, .filters select{min-width: 180px}
-
-/* ✅ Table */
-.tableWrap{overflow:auto; border-radius: 14px; border:1px solid var(--stroke)}
-.table{width:100%; border-collapse: collapse; min-width: 980px}
-.table th, .table td{
-  padding:10px 10px;
-  border-bottom:1px solid var(--stroke);
-  text-align:right;
-  vertical-align: middle;
-  font-size:13px;
-}
-.table th{position:sticky; top:0; background: rgba(15,26,46,.95)}
-.num{text-align:left}
-
-.badge{
-  display:inline-block;
-  padding:4px 10px;
-  border-radius: 999px;
-  border:1px solid var(--stroke);
-  background: rgba(255,255,255,.04);
-  font-size:12px;
-  white-space: nowrap;
-}
-.rowActions{display:flex; gap:6px; flex-wrap:wrap}
-
-/* ✅ Ledger */
-.ledger{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
-.ledger input{min-width: 260px}
-.ledgerBox{
-  margin-top:12px;
-  border:1px solid var(--stroke);
-  border-radius:14px;
-  background: rgba(255,255,255,.04);
-  padding:10px;
-  width:100%;
-}
-.ledgerBox .line{
-  display:flex; justify-content:space-between; gap:8px;
-  padding:8px 0;
-  border-bottom:1px dashed rgba(255,255,255,.12)
-}
-.ledgerBox .line:last-child{border-bottom:none}
-.ledgerBox .muted{color:var(--muted)}
-
-/* ✅ Modal */
-.modal{
-  position:fixed; inset:0; z-index:998;
-  display:grid; place-items:center;
-  background: rgba(3,6,18,.72);
-  backdrop-filter: blur(10px);
-  padding:16px;
-}
-.modalCard{
-  width:min(520px, 100%);
-  border:1px solid var(--stroke);
-  border-radius: 22px;
-  background: linear-gradient(180deg, rgba(15,26,46,.95), rgba(12,22,41,.95));
-  box-shadow: var(--shadow);
-  padding:14px;
-}
-.modalHead{
-  display:flex; align-items:center; justify-content:space-between;
-  gap:10px;
-  margin-bottom:10px;
-}
-.modalHead h3{margin:0; font-size:16px}
-.modalBody{display:grid; gap:10px}
-
-.error{
-  margin-top:10px;
-  padding:10px 12px;
-  border-radius: 14px;
-  border:1px solid rgba(255,80,80,.35);
-  background: rgba(255,80,80,.10);
-  color: #ffd1d1;
-  font-size: 12px;
-}
-
-/* ✅ PIN Gate */
-.gate{
-  position:fixed; inset:0; z-index:999;
-  background:
-    radial-gradient(1200px 700px at 60% -10%, rgba(0,140,255,.18), transparent 60%),
-    radial-gradient(900px 650px at 10% 10%, rgba(0,188,212,.14), transparent 55%),
-    rgba(3,6,18,.75);
-  backdrop-filter: blur(12px);
-}
-
-/* ✅ Center login box */
-.gateShell{
-  position:absolute; inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding:18px;
-}
-
-.gateWrap{
-  width:min(720px, 100%);
-  display:flex;
-  flex-direction:column;
-  gap:14px;
-  padding-bottom: 8px;
-}
-
-.gateCard2{
-  width:100%;
-  border:1px solid rgba(255,255,255,.12);
-  border-radius: 26px;
-  background: linear-gradient(180deg, rgba(12,20,38,.92), rgba(10,16,30,.92));
-  box-shadow: 0 24px 70px rgba(0,0,0,.55);
-  padding:16px;
-}
-
-.gateHead2{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  margin-bottom:12px;
-}
-.gateAvatar{
-  width:44px; height:44px;
-  border-radius: 16px;
-  display:grid; place-items:center;
-  font-weight:900;
-  background: linear-gradient(135deg, rgba(0,140,255,.95), rgba(0,188,212,.8));
-}
-.gateTitleWrap{flex:1}
-.gateTitle{font-size:20px; font-weight:900; margin-bottom:4px}
-.gateSub{color: rgba(169,183,208,.92); font-size:12px}
-
-.gateForm2{display:grid; gap:10px}
-
-.pinLbl{display:block; color: rgba(169,183,208,.95); font-size:12px}
-
-.pinInputWrap{
-  position:relative;
-  border-radius: 18px;
-  border:1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.04);
-}
-.pinInput{
-  width:100%;
-  padding:14px 46px 14px 14px;
-  border:0;
-  outline:0;
-  background: transparent;
-  color: var(--text);
-  border-radius: 18px;
-}
-.pinToggle{
-  position:absolute;
-  left:10px;
-  top:50%;
-  transform:translateY(-50%);
-  border:1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.03);
-  color: var(--text);
-  border-radius: 14px;
-  padding:8px 10px;
-  cursor:pointer;
-}
-.btnPin{
-  width:max-content;
-  margin-right:auto;
-  padding:12px 18px;
-  border:0;
-  cursor:pointer;
-  border-radius: 18px;
-  color:#fff;
-  font-weight:900;
-  background: linear-gradient(135deg, rgba(0,140,255,.95), rgba(0,188,212,.85));
-}
-.warnLine{
-  margin-top:6px;
-  color: rgba(169,183,208,.9);
-  font-size:12px;
-}
-
-/* ✅ Footer inside login */
-.gateFooter{
-  text-align:center;
-  font-size:12px;
-  color: rgba(231,238,252,.90);
-}
-.gateFooterMuted{
-  margin-top:6px;
-  color: rgba(169,183,208,.85);
-  font-weight:700;
-}
-
-/* ✅ NAV (Tabs) */
-.navBar{
-  display:flex;
-  gap:8px;
-  padding:10px 14px;
-  background: rgba(11,18,32,.85);
-  border-bottom:1px solid var(--stroke);
-  position:sticky;
-  top: calc(14px + 42px + 14px);
-  z-index:9;
-
-  overflow-x:auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-.navBar::-webkit-scrollbar{display:none}
-
-.navBtn{
-  flex: 0 0 auto;
-  min-width: 140px;
-  padding:10px;
-  border-radius:14px;
-  border:1px solid var(--stroke);
-  background: rgba(255,255,255,.04);
-  color:var(--text);
-  font-weight:900;
-  cursor:pointer;
-  white-space: nowrap;
-}
-@media (min-width: 760px){
-  .navBtn{flex:1; min-width: 0}
-}
-
-.navBtn.active{
-  background: linear-gradient(135deg, rgba(0,140,255,.9), rgba(0,188,212,.8));
-}
-
-/* ✅ Pages */
-.page{ display:block; }
-.pageHead{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  margin-bottom:12px;
-}
-.pageHead h2{ margin:0; }
-
-/* ✅ Footer (main) */
-.footer2{
-  padding:24px 14px 34px;
-  text-align:center;
-  color:#0f172a;
-  background: rgba(255,255,255,.65);
-}
-.footer2 .muted2{
-  margin-top:6px;
-  color: rgba(15,23,42,.70);
-  font-weight:700;
-}
-
-/* ✅ QR تحت الفوتر (عادي + طباعة) */
-.qrFooter{
-  text-align:center;
-  padding: 14px 14px 28px;
-}
-.qrFooter img{
-  width: 140px;
-  max-width: 60vw;
-  height: auto;
-  display: inline-block;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.04);
-  padding: 10px;
-}
-
-/* ✅ Fix hidden elements */
-[hidden]{ display:none !important; }
-.gate[hidden], .modal[hidden]{ display:none !important; }
-
-/* ✅ FIX: منع وميض PIN Gate بعد Refresh (اعتمادًا على html.authed) */
-html.authed #pinGate{ display:none !important; }
-
-/* =========================================================
-   ✅ Preview / Print Styles
-   ========================================================= */
-
-/* صفحات المعاينة */
-.previewWrap{ display:grid; gap:12px; }
-.previewHead{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  flex-wrap:wrap;
-}
-.previewHead h2{ margin:0; font-size:16px; }
-.previewActions{ display:flex; gap:8px; flex-wrap:wrap; }
-
-/* كارت المعاينة */
-.printCard{
-  background: linear-gradient(180deg, rgba(15,26,46,.92), rgba(12,22,41,.92));
-  border:1px solid var(--stroke);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding:14px;
-}
-.printHeader{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:10px;
-  flex-wrap:wrap;
-  border-bottom:1px solid rgba(255,255,255,.10);
-  padding-bottom:10px;
-  margin-bottom:10px;
-}
-.printHeader .title{ font-weight:900; font-size:16px; }
-.printHeader .sub{ color:var(--muted); font-size:12px; margin-top:4px; }
-
-.kvGrid{
-  display:grid;
-  grid-template-columns: repeat(2, minmax(0,1fr));
-  gap:10px;
-}
-@media (max-width: 560px){ .kvGrid{grid-template-columns:1fr} }
-.kv{
-  background: rgba(255,255,255,.05);
-  border:1px solid var(--stroke);
-  border-radius:14px;
-  padding:10px;
-}
-.kv .k{color:var(--muted); font-size:12px}
-.kv .v{margin-top:6px; font-weight:900}
-
-/* جدول صغير في المعاينة */
-.miniTable{
-  width:100%;
-  border-collapse:collapse;
-  overflow:hidden;
-  border-radius:14px;
-  border:1px solid var(--stroke);
-}
-.miniTable th, .miniTable td{
-  padding:10px 10px;
-  border-bottom:1px solid rgba(255,255,255,.10);
-  font-size:13px;
-  text-align:right;
-}
-.miniTable th{
-  background: rgba(255,255,255,.04);
-  color: rgba(231,238,252,.92);
-}
-.miniTable td.num{text-align:left}
-.miniMuted{color:var(--muted); font-size:12px; margin-top:8px}
-
-/* =========================================================
-   ✅ PRINT MODE (Save as PDF) — محسّن A4
-   ✅ المطلوب: الفوتر + QR يظهروا في الطباعة
-   ========================================================= */
-@media print{
-  @page{ size: A4; margin: 12mm; }
-
-  *{
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  html, body{ height:auto !important; }
-
-  body{
-    background:#fff !important;
-    color:#0f172a !important;
-    font-size: 12pt !important;
-    line-height: 1.35 !important;
-    direction: rtl !important;
-  }
-
-  /* ✅ إخفاء عناصر التحكم فقط */
-  .topbar,
-  .navBar,
-  .btn,
-  .actions,
-  .filters,
-  .toolbar,
-  .pageHead,
-  .previewActions,
-  #pinGate,
-  #payModal,
-  #pinConfirmModal{
-    display:none !important;
-  }
-
-  /* ✅ توسيع المحتوى */
-  .container{
-    max-width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
-  /* ✅ كروت الطباعة بدون ظل */
-  .card,
-  .printCard{
-    box-shadow:none !important;
-    border:1px solid #e5e7eb !important;
-    background:#fff !important;
-    color:#0f172a !important;
-  }
-
-  .printHeader{
-    border-bottom: 1px solid #e5e7eb !important;
-    padding-bottom: 8px !important;
-    margin-bottom: 10px !important;
-  }
-  .printHeader .title{ font-size: 14pt !important; }
-  .printHeader .sub,
-  .miniMuted{ font-size: 10pt !important; }
-
-  .kv{
-    background:#fff !important;
-    border:1px solid #e5e7eb !important;
-  }
-  .kv .k{ color:#475569 !important; }
-
-  .miniTable{ border:1px solid #e5e7eb !important; }
-  .miniTable th{
-    background:#f8fafc !important;
-    color:#0f172a !important;
-  }
-  .miniTable td, .miniTable th{
-    border-bottom:1px solid #e5e7eb !important;
-    color:#0f172a !important;
-    padding: 8px 8px !important;
-    font-size: 10.5pt !important;
-  }
-
-  /* ✅ السجل الكبير */
-  .tableWrap{ border:0 !important; overflow:visible !important; }
-  .table{
-    min-width: 0 !important;
-    width: 100% !important;
-    font-size: 10.5pt !important;
-  }
-  .table th, .table td{ padding: 7px 7px !important; }
-  .table th{ position: static !important; }
-
-  /* ✅ منع انقسام الكروت */
-  .card, .printCard, .kv, .tableWrap, .footer2, .qrFooter{
-    break-inside: avoid !important;
-    page-break-inside: avoid !important;
-  }
-
-  .previewWrap{ display:block !important; }
-
-  /* ✅ (مهم) الفوتر يظهر في الطباعة */
-  .footer2{
-    display:block !important;
-    background: transparent !important;
-    color:#0f172a !important;
-    padding: 10mm 0 4mm !important;
-    margin-top: 8mm !important;
-    border-top: 1px dashed #e5e7eb !important;
-    text-align:center !important;
-  }
-  .footer2 .muted2{
-    color: rgba(15,23,42,.70) !important;
-  }
-
-  /* ✅ (مهم) الـ QR يظهر في الطباعة */
-  .qrFooter{
-    display:block !important;
-    text-align:center !important;
-    padding: 6mm 0 0 !important;
-    margin-top: 0 !important;
-  }
-  .qrFooter img{
-    width: 38mm !important;
-    max-width: 55mm !important;
-    padding: 4mm !important;
-    border: 1px solid #e5e7eb !important;
-    background: #fff !important;
-    border-radius: 6mm !important;
-  }
-
-
-  /* ✅ Print Fixes (Records & Reports) */
-  /* Force any JS/inline max-height/height on scroll containers to print full content */
-  .tableWrap,
-  .card .tableWrap,
-  .card2 .tableWrap,
-  #recordsTableWrap,
-  #reportsTableWrap{
-    height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
-  }
-
-  /* Ensure tables paginate correctly and headers repeat */
-  table{ page-break-inside:auto; }
-  thead{ display: table-header-group; }
-  tfoot{ display: table-footer-group; }
-  tr{ page-break-inside: avoid; page-break-after: auto; }
-
-  /* Avoid accidental hiding of report/records sections */
-  #page-records,
-  #page-reports,
-  #page-records * ,
-  #page-reports *{
-    visibility: visible !important;
-  }
-
-  /* If any container uses transforms (can break print layout), reset */
-  .page, section, main, .app, #app{
-    transform: none !important;
-  }
-
-
-}
-
-
-/* ✅ Ledger mode selector (Customer/Supplier/All) */
-.ledger select{
-  min-width: 210px;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  padding-inline-end: 38px;
-  background-image:
-    linear-gradient(45deg, transparent 50%, rgba(231,238,252,.85) 50%),
-    linear-gradient(135deg, rgba(231,238,252,.85) 50%, transparent 50%);
-  background-position:
-    14px 50%,
-    20px 50%;
-  background-size:
-    6px 6px,
-    6px 6px;
-  background-repeat: no-repeat;
-}
-
-/* ✅ Mobile: خلّي العناصر تملى العرض وتتراص تحت بعض */
-@media (max-width: 560px){
-  .ledger{ width: 100%; }
-  .ledger select,
-  .ledger input,
-  .ledger button{
-    width: 100%;
-    min-width: 0 !important;
-  }
-}
-
-/* =========================================================
-   ✅ REPORTS PAGE (NEW)
-   ========================================================= */
-
-.repToolbar{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-  align-items:flex-end;
-  justify-content:space-between;
-}
-.repFilters{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-  align-items:flex-end;
-}
-.repFilters .field{ min-width: 180px; }
-.repFilters .field.sm{ min-width: 150px; }
-.repFilters .field.lg{ min-width: 260px; }
-
-@media (max-width: 560px){
-  .repToolbar, .repFilters{ width:100%; }
-  .repFilters .field,
-  .repFilters .field.sm,
-  .repFilters .field.lg{
-    min-width: 0;
-    width:100%;
-  }
-}
-
-.repKpis{
-  display:grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap:10px;
-  margin-top: 12px;
-}
-@media (max-width: 980px){
-  .repKpis{ grid-template-columns: repeat(2, minmax(0,1fr)); }
-}
-
-.repSplit{
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap:14px;
-  margin-top: 12px;
-}
-@media (max-width: 980px){
-  .repSplit{ grid-template-columns: 1fr; }
-}
-
-.repTitle{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  margin: 8px 0 10px;
-}
-.repTitle h3{ margin:0; font-size:14px; }
-.repTitle .muted{ color: var(--muted); font-size: 12px; }
-
-.repTable{ min-width: 780px; }
-@media (max-width: 980px){ .repTable{ min-width: 680px; } }
-@media (max-width: 560px){ .repTable{ min-width: 640px; } }
-
-#payFlow{
-  appearance:none;
-  -webkit-appearance:none;
-  -moz-appearance:none;
-  padding-inline-end: 42px;
-  background-image:
-    linear-gradient(45deg, transparent 50%, rgba(231,238,252,.85) 50%),
-    linear-gradient(135deg, rgba(231,238,252,.85) 50%, transparent 50%);
-  background-position:
-    14px 50%,
-    20px 50%;
-  background-size:
-    6px 6px,
-    6px 6px;
-  background-repeat:no-repeat;
-}
-
-@media print{
-  #page-reports .card{ display:block !important; }
-  #page-reports .repSplit{ display:block !important; }
-  #page-reports .tableWrap{ border: 1px solid #e5e7eb !important; }
-  #page-reports table{ width:100% !important; min-width:0 !important; }
-  #page-reports .repKpis{
-    display:grid !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap:10px !important;
-  }
-}
-
-/* =========================================================
-   ✅ Loading Overlay
-   ========================================================= */
-.loadingOverlay{
-  position:fixed;
-  inset:0;
-  z-index:100000;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background: rgba(3,6,18,.55);
-  backdrop-filter: blur(6px);
-}
-.loadingCard{
-  width:min(360px, 92vw);
-  border:1px solid rgba(255,255,255,.14);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(15,26,46,.96), rgba(12,22,41,.96));
-  box-shadow: 0 18px 60px rgba(0,0,0,.55);
-  padding:18px 16px;
-  text-align:center;
-}
-.spinner{
-  width:40px;
-  height:40px;
-  border-radius:50%;
-  border:3px solid rgba(255,255,255,.18);
-  border-top-color: rgba(0,188,212,.95);
-  margin: 0 auto 10px;
-  animation: spin .9s linear infinite;
-}
-.loadingText{
-  font-weight:900;
-  margin-top:6px;
-}
-.loadingSub{
-  margin-top:6px;
-  color: rgba(169,183,208,.92);
-  font-size:12px;
-}
-@keyframes spin{ to{ transform: rotate(360deg); } }
-
-
-/* =========================================================
-   ✅ UI/UX Fixes (Responsive + Select visibility + Focus)
-   ========================================================= */
-
-/* Make focus visible and consistent (keyboard-friendly) */
-:focus-visible{
-  outline: 2px solid rgba(0,188,212,.85);
-  outline-offset: 2px;
-}
-
-/* Fix: on some laptops (Windows/Chrome) selected text/option looks faint until hover */
-select{
-  color: var(--text);
-  background-color: rgba(255,255,255,.04);
-}
-
-/* Keep options readable in dark mode (best-effort; native UI may vary by OS) */
-select option{
-  color: var(--text);
-  background: #0f1a2e;
-}
-select option:disabled{
-  color: rgba(169,183,208,.85);
-}
-
-/* If you use an empty placeholder option, show it muted */
-select:invalid{
-  color: rgba(169,183,208,.85);
-}
-
-/* Improve hover/active contrast */
-input:hover, select:hover{
-  border-color: rgba(255,255,255,.18);
-}
-input:focus, select:focus{
-  border-color: rgba(0,188,212,.55);
-  box-shadow: 0 0 0 3px rgba(0,188,212,.12);
-}
-
-/* Prevent horizontal overflow on small screens */
-.container{ overflow-x: clip; }
-@media (max-width: 560px){
-  .topbar{ padding:12px 12px; }
-  .brand{ gap:10px; }
-  h1{ font-size:16px; }
-
-  .actions{ width:100%; justify-content:flex-start; }
-  .actions .btn{ width:auto; }
-
-  .navBtn{ min-width: 120px; padding:10px 12px; }
-
-  /* Tables: keep scroll but reduce minimum width a bit */
-  .table{ min-width: 760px; }
-}
-
-/* Make table cells wrap nicely (but keep numbers aligned) */
-.table td{ word-break: break-word; }
-.table td.num{ word-break: normal; }
-
-/* Improve scrollbar experience for tableWrap on touch */
-.tableWrap{
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Slightly stronger contrast for hints on big screens */
-@media (min-width: 980px){
-  .help, .hint, .warnLine{ color: rgba(169,183,208,.92); }
-}
-
-/* =========================================================
-   ✅ PRINT MODE (Single Source of Truth)
-   (Keep your earlier print block; this one only adds missing guards.)
-   ========================================================= */
-@media print{
-  [hidden]{ display:none !important; }
-  .grid{ display:block !important; }
-  .grid > *{ margin-bottom: 10mm !important; }
-}
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>سوبر ماركت أولاد يحيى — دفتر الحسابات</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- ✅ Google Sheets / Apps Script Config (الأحدث) -->
+  <script>
+    window.AXENTRO_API = {
+      // ✅ IMPORTANT: لازم يكون نفس لينك الـ Web App اللي عليه كود code.gs بتاع الدفتر
+      // اللينك السابق كان بيشير لسكربت مختلف وبالتالي كانت النتيجة "PIN غير صحيح"
+      scriptUrl: "https://script.google.com/macros/s/AKfycbxg-mnc60NWXnOQjI9VurtgTpkEiwnCyjnbP5afz74h-7X3sWQipJu2oKJfb5uIa0CO/exec",
+      pin: "1234"
+    };
+  </script>
+</head>
+
+<body>
+  <!-- ✅ PIN GATE -->
+  <div id="pinGate" class="gate">
+    <div class="gateShell">
+      <div class="gateWrap">
+        <div class="gateCard2">
+          <div class="gateHead2">
+            <div class="gateAvatar">أ</div>
+            <div class="gateTitleWrap">
+              <div class="gateTitle">سوبر ماركت أولاد يحيى</div>
+              <div class="gateSub">إدارة هيثم</div>
+            </div>
+          </div>
+
+          <form id="pinForm" class="gateForm2">
+            <label class="pinLbl">PIN</label>
+
+            <div class="pinInputWrap">
+              <input id="pinInput" class="pinInput" type="password" inputmode="numeric"
+                     placeholder="ادخل PIN هنا" maxlength="8" />
+              <button id="pinToggle" class="pinToggle" type="button" aria-label="إظهار/إخفاء PIN">👁</button>
+            </div>
+
+            <div class="help">التعليمات: اكتب الرقم السري ثم اضغط “دخول”.</div>
+
+            <div class="orDivider"><span>أو</span></div>
+
+            <!-- ✅ Google Sign-In (قريبًا) -->
+            <button id="googleLoginBtn" class="btnPin googleBtn" type="button" aria-label="تسجيل دخول بجوجل">
+              تسجيل دخول بجوجل (قريبًا)
+            </button>
+            <div id="googleLoginHint" class="help">
+              سيتم تفعيل تسجيل الدخول بجوجل بعد إعداد نظام السماح (Allowlist). حاليًا هذا الزر للتجهيز فقط.
+            </div>
+
+            <button class="btnPin" type="submit">دخول</button>
+            <div id="pinError" class="error" hidden>PIN غير صحيح.</div>
+
+            <div class="warnLine">⚠️ تنبيه: هذه الصفحة للإدارة فقط وليست للعملاء.</div>
+          </form>
+        </div>
+
+        <!-- ✅ Footer داخل اللوجين (زي ما كان) -->
+        <div class="gateFooter">
+          <div>© Axentro — All Rights Reserved 2024</div>
+          <div class="gateFooterMuted">By Ahmed Hamouda</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ✅ APP HEADER -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">أ</div>
+      <div>
+        <h1>
+          سوبر ماركت أولاد يحيى
+          <span class="adminTag">إدارة هيثم</span>
+        </h1>
+        <p>مصاريف • سلف • آجل • موردين • مدفوعات منفصلة</p>
+      </div>
+    </div>
+
+    <!-- ✅ الهيدر: زر طباعة + تسجيل خروج فقط -->
+    <div class="actions">
+      <button id="btnPrint" class="btn ghost" type="button">طباعة</button>
+      <button id="btnLogout" class="btn danger" type="button">تسجيل خروج</button>
+    </div>
+  </header>
+
+  <!-- ✅ NAV (Tabs) -->
+  <nav class="navBar" id="navBar" hidden>
+    <button class="navBtn active" data-page="dashboard">🏠 الرئيسية</button>
+    <button class="navBtn" data-page="records">📒 السجل</button>
+    <button class="navBtn" data-page="payments">💳 المدفوعات</button>
+    <button class="navBtn" data-page="ledger">📊 كشف حساب</button>
+    <button class="navBtn" data-page="reports">📈 التقارير</button>
+    <button class="navBtn" data-page="trash">🗑️ المحذوفات</button>
+  </nav>
+
+  <main class="container" id="appRoot" hidden>
+
+    <!-- ✅ PAGE: DASHBOARD -->
+    <section id="page-dashboard" class="page">
+      <div class="grid">
+        <div class="card">
+          <h2>ملخص سريع</h2>
+
+          <div class="kpis">
+            <div class="kpi">
+              <span class="label">إجمالي المصروفات</span>
+              <span id="kpiExpenses" class="value">—</span>
+            </div>
+
+            <div class="kpi">
+              <span class="label">إجمالي المدفوعات</span>
+              <span id="kpiPaid" class="value">—</span>
+            </div>
+
+            <div class="kpi">
+              <span class="label">فلوس ليا (عملاء + سلف)</span>
+              <span id="kpiReceivable" class="value">—</span>
+            </div>
+
+            <div class="kpi">
+              <span class="label">فلوس عليا (موردين)</span>
+              <span id="kpiPayable" class="value">—</span>
+            </div>
+
+            <div class="kpi">
+              <span class="label">عدد العمليات</span>
+              <span id="kpiCount" class="value">—</span>
+            </div>
+          </div>
+
+          <p class="hint" style="margin-top:10px">
+            * “فلوس ليا” = آجل عميل + سُلفة. — “فلوس عليا” = فواتير موردين. — المصروفات ليست مستحقات.
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>إضافة عملية جديدة</h2>
+
+          <form id="entryForm" class="form">
+            <div class="row">
+              <div class="field">
+                <label>التاريخ</label>
+                <input id="date" type="date" />
+                <div class="help">التعليمات: اختار تاريخ العملية.</div>
+              </div>
+
+              <div class="field">
+                <label>النوع</label>
+                <select id="type">
+                  <option value="" selected>— اختر —</option>
+                  <option value="expense">مصروف</option>
+                  <option value="advance">سُلفة</option>
+                  <option value="credit_customer">آجل (عميل)</option>
+                  <option value="credit_supplier">فاتورة/مورد (تاجر)</option>
+                </select>
+                <div class="help">التعليمات: اختر نوع العملية لتظهر في التقارير بشكل صحيح.</div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label>الاسم / الجهة</label>
+                <input id="party" type="text" placeholder="مثال: أحمد / عميل محمد / مورد الشروق" />
+                <div class="help">التعليمات: اكتب اسم الشخص أو الجهة.</div>
+              </div>
+
+              <div class="field">
+                <label>وصف العملية</label>
+                <input id="desc" type="text" placeholder="مثال: إيجار فبراير / بضاعة آجلة / سلفة عامل" />
+                <div class="help">التعليمات: وصف مختصر يسهل عليك البحث بعدين.</div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label>الإجمالي (جنيه)</label>
+                <input id="total" type="number" min="0" step="0.01" placeholder="مثال: 1500" />
+                <div class="help">التعليمات: اكتب إجمالي المبلغ (رقم أكبر من صفر).</div>
+              </div>
+
+              <div class="field">
+                <label>دفعة أولى (اختياري)</label>
+                <input id="firstPay" type="number" min="0" step="0.01" placeholder="مثال: 300" />
+                <div class="help">التعليمات: لو تم دفع جزء الآن، اكتب المبلغ. لو لا، سيبها فاضية.</div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label>تصنيف (للمصاريف فقط)</label>
+                <select id="category">
+                  <option value="" selected>—</option>
+                  <option>مرتبات</option>
+                  <option>إيجار</option>
+                  <option>كهرباء</option>
+                  <option>مياه</option>
+                  <option>إنترنت</option>
+                  <option>نثريات</option>
+                  <option>صيانة</option>
+                  <option>نقل</option>
+                  <option>أخرى</option>
+                </select>
+                <div class="help">التعليمات: لو النوع “مصروف” اختار تصنيف، غير كده سيبه —.</div>
+              </div>
+
+              <div class="field">
+                <label>ملاحظات (اختياري)</label>
+                <input id="notes" type="text" placeholder="أي تفاصيل إضافية" />
+                <div class="help">التعليمات: اكتب أي ملاحظة (اختياري).</div>
+              </div>
+            </div>
+
+            <div class="row">
+              <button class="btn primary" type="submit">حفظ العملية</button>
+              <button id="btnReset" class="btn" type="button">مسح الحقول</button>
+            </div>
+
+            <p class="hint">
+              ملحوظة: المدفوعات بتتسجل في “سجل المدفوعات” منفصل. (المتبقي = الإجمالي - مجموع المدفوعات).
+            </p>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- ✅ PAGE: RECORDS -->
+    <section id="page-records" class="page" hidden>
+      <div class="pageHead">
+        <h2>السجل</h2>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <div class="filters">
+            <input id="q" type="search" placeholder="بحث بالاسم / الوصف / الملاحظات..." />
+            <select id="filterType">
+              <option value="">كل الأنواع</option>
+              <option value="expense">مصروف</option>
+              <option value="advance">سُلفة</option>
+              <option value="credit_customer">آجل (عميل)</option>
+              <option value="credit_supplier">فاتورة/مورد</option>
+            </select>
+            <select id="filterOpen">
+              <option value="">الكل</option>
+              <option value="open">عليه باقي فقط</option>
+              <option value="closed">مقفول (مدفوع بالكامل)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>التاريخ</th>
+                <th>النوع</th>
+                <th>الاسم/الجهة</th>
+                <th>الوصف</th>
+                <th>تصنيف</th>
+                <th class="num">إجمالي (ج.م)</th>
+                <th class="num">مدفوع (ج.م)</th>
+                <th class="num">باقي (ج.م)</th>
+                <th>إجراءات</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ✅ PAGE: PAYMENTS -->
+    <section id="page-payments" class="page" hidden>
+      <div class="pageHead">
+        <h2>سجل المدفوعات</h2>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <div class="filters">
+            <input id="payQ" type="search" placeholder="بحث في المدفوعات بالاسم/ملاحظة..." />
+          </div>
+        </div>
+
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>تاريخ الدفع</th>
+                <th>الاسم/الجهة</th>
+                <th>تابع لعملية</th>
+                <th class="num">المبلغ (ج.م)</th>
+                <th>ملاحظة</th>
+                <th>إجراء</th>
+              </tr>
+            </thead>
+            <tbody id="payTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ✅ PAGE: LEDGER -->
+    <section id="page-ledger" class="page" hidden>
+      <div class="pageHead">
+        <h2>كشف حساب</h2>
+      </div>
+
+      <div class="card">
+        <div class="ledger">
+          <select id="ledgerMode">
+            <option value="all" selected>الكل</option>
+            <option value="customer">عملاء فقط (فلوس ليا)</option>
+            <option value="supplier">موردين فقط (فلوس عليا)</option>
+          </select>
+
+          <input id="ledgerName" type="text" placeholder="اكتب الاسم (جزء من الاسم يكفي)..." />
+          <button id="btnLedger" class="btn" type="button">عرض</button>
+          <button id="btnLedgerPreview" class="btn ghost" type="button">معاينة</button>
+          <div id="ledgerBox" class="ledgerBox"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ✅ PAGE: REPORTS -->
+    <section id="page-reports" class="page" hidden>
+      <div class="pageHead">
+        <h2>التقارير</h2>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <div class="filters">
+            <select id="repRangePreset">
+              <option value="today">اليوم</option>
+              <option value="this_month">الشهر الحالي</option>
+              <option value="this_year">السنة الحالية</option>
+              <option value="last_7">آخر 7 أيام</option>
+              <option value="last_30">آخر 30 يوم</option>
+              <option value="custom" selected>فترة مخصصة</option>
+            </select>
+
+            <input id="repFrom" type="date" />
+            <input id="repTo" type="date" />
+
+            <select id="repType">
+              <option value="all" selected>كل الأنواع</option>
+              <option value="expense">مصاريف</option>
+              <option value="advance">سُلف</option>
+              <option value="credit_customer">عملاء آجل (فلوس ليا)</option>
+              <option value="credit_supplier">موردين (فلوس عليا)</option>
+              <option value="payments_out">مدفوعات خارجة (دفعت أنا)</option>
+              <option value="receipts_in">متحصلات داخلة (اتدفعتلي أنا)</option>
+            </select>
+
+            <input id="repParty" type="search" placeholder="فلتر بالاسم/الجهة (اختياري)..." />
+
+            <button id="btnRunReports" class="btn" type="button">تطبيق</button>
+            <button id="btnPrintReports" class="btn ghost" type="button">طباعة / PDF</button>
+          </div>
+        </div>
+
+        <div class="kpis" style="margin-top:12px">
+          <div class="kpi">
+            <span class="label">إجمالي العمليات داخل الفترة</span>
+            <span id="repKpiEntries" class="value">—</span>
+          </div>
+          <div class="kpi">
+            <span class="label">إجمالي المدفوعات داخل الفترة</span>
+            <span id="repKpiPays" class="value">—</span>
+          </div>
+          <div class="kpi">
+            <span class="label">إجمالي (فلوس ليا) داخل الفترة</span>
+            <span id="repKpiReceivable" class="value">—</span>
+          </div>
+          <div class="kpi">
+            <span class="label">إجمالي (فلوس عليا) داخل الفترة</span>
+            <span id="repKpiPayable" class="value">—</span>
+          </div>
+        </div>
+
+        <div class="tableWrap" style="margin-top:12px">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>التاريخ</th>
+                <th>النوع</th>
+                <th>الاسم/الجهة</th>
+                <th>الوصف</th>
+                <th class="num">الإجمالي</th>
+                <th class="num">المدفوع</th>
+                <th class="num">الباقي</th>
+              </tr>
+            </thead>
+            <tbody id="repEntriesTbody"></tbody>
+          </table>
+        </div>
+
+        <div class="tableWrap" style="margin-top:12px">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>تاريخ الدفع</th>
+                <th>الاسم/الجهة</th>
+                <th>ملاحظة</th>
+                <th class="num">المبلغ</th>
+              </tr>
+            </thead>
+            <tbody id="repPaysTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ✅ PAGE: TRASH -->
+    <section id="page-trash" class="page" hidden>
+      <div class="pageHead">
+        <h2>سجل المحذوفات</h2>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <div class="filters">
+            <input id="trashQ" type="search" placeholder="بحث في المحذوفات بالاسم/الوصف..." />
+          </div>
+        </div>
+
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>وقت الحذف</th>
+                <th>النوع</th>
+                <th>الاسم/الجهة</th>
+                <th class="num">المبلغ</th>
+                <th>سبب</th>
+                <th>إجراء</th>
+              </tr>
+            </thead>
+            <tbody id="trashTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ✅ PAGE: ENTRY PREVIEW -->
+    <section id="page-entryPreview" class="page" hidden>
+      <div class="previewWrap">
+        <div class="previewHead">
+          <h2>معاينة العملية</h2>
+          <div class="previewActions">
+            <button id="btnPrintEntry" class="btn ghost" type="button">طباعة / PDF</button>
+            <button id="btnBackFromEntryPreview" class="btn" type="button">رجوع</button>
+          </div>
+        </div>
+
+        <div class="printCard">
+          <div class="printHeader">
+            <div>
+              <div class="title">سوبر ماركت أولاد يحيى</div>
+              <div class="sub">إدارة هيثم</div>
+              <div class="miniMuted" id="prevEntryMeta">—</div>
+            </div>
+            <div class="miniMuted" id="prevEntryStatus">—</div>
+          </div>
+
+          <div class="kvGrid">
+            <div class="kv"><div class="k">التاريخ</div><div class="v" id="prevDate">—</div></div>
+            <div class="kv"><div class="k">النوع</div><div class="v" id="prevType">—</div></div>
+            <div class="kv"><div class="k">الاسم/الجهة</div><div class="v" id="prevParty">—</div></div>
+            <div class="kv"><div class="k">الوصف</div><div class="v" id="prevDesc">—</div></div>
+            <div class="kv"><div class="k">التصنيف</div><div class="v" id="prevCat">—</div></div>
+            <div class="kv"><div class="k">ملاحظات</div><div class="v" id="prevNotes">—</div></div>
+            <div class="kv"><div class="k">الإجمالي</div><div class="v" id="prevTotal">—</div></div>
+            <div class="kv"><div class="k">مدفوع / باقي</div><div class="v" id="prevPaidRemain">—</div></div>
+          </div>
+
+          <div class="miniMuted" style="margin-top:12px">المدفوعات التابعة:</div>
+          <table class="miniTable" style="margin-top:8px">
+            <thead>
+              <tr>
+                <th>التاريخ</th>
+                <th>ملاحظة</th>
+                <th class="num">المبلغ</th>
+              </tr>
+            </thead>
+            <tbody id="prevPaysTbody"></tbody>
+          </table>
+
+          <div class="miniMuted">* للطباعة اختر Print → Save as PDF</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ✅ PAGE: LEDGER PREVIEW -->
+    <section id="page-ledgerPreview" class="page" hidden>
+      <div class="previewWrap">
+        <div class="previewHead">
+          <h2>معاينة كشف الحساب</h2>
+          <div class="previewActions">
+            <button id="btnPrintLedger" class="btn ghost" type="button">طباعة / PDF</button>
+            <button id="btnBackFromLedgerPreview" class="btn" type="button">رجوع</button>
+          </div>
+        </div>
+
+        <div class="printCard">
+          <div class="printHeader">
+            <div>
+              <div class="title">سوبر ماركت أولاد يحيى</div>
+              <div class="sub">إدارة هيثم</div>
+              <div class="miniMuted" id="prevLedgerMeta">—</div>
+            </div>
+            <div class="miniMuted" id="prevLedgerSummary">—</div>
+          </div>
+
+          <div class="miniMuted">تفاصيل العمليات:</div>
+          <table class="miniTable" style="margin-top:8px">
+            <thead>
+              <tr>
+                <th>التاريخ</th>
+                <th>النوع</th>
+                <th>الوصف</th>
+                <th class="num">الإجمالي</th>
+                <th class="num">المدفوع</th>
+                <th class="num">الباقي</th>
+              </tr>
+            </thead>
+            <tbody id="prevLedgerEntriesTbody"></tbody>
+          </table>
+
+          <div class="miniMuted" style="margin-top:12px">تفاصيل المدفوعات:</div>
+          <table class="miniTable" style="margin-top:8px">
+            <thead>
+              <tr>
+                <th>التاريخ</th>
+                <th>ملاحظة</th>
+                <th class="num">المبلغ</th>
+              </tr>
+            </thead>
+            <tbody id="prevLedgerPaysTbody"></tbody>
+          </table>
+
+          <div class="miniMuted">* للطباعة اختر Print → Save as PDF</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ✅ Footer (زي ما كان) -->
+  <footer class="footer2">
+    <div>© Axentro — All Rights Reserved 2024</div>
+    <div class="muted2">By Ahmed Hamouda</div>
+  </footer>
+
+  <!-- ✅ QR تحت الفوتر (هيظهر في الطباعة/PDF) -->
+  <div class="qrFooter">
+    <img src="images/qr.png" alt="QR Code" />
+  </div>
+
+  <!-- ✅ Modal: Add Payment -->
+  <div id="payModal" class="modal" hidden>
+    <div class="modalCard">
+      <div class="modalHead">
+        <h3>إضافة دفعة</h3>
+        <button id="payClose" class="btn small" type="button">إغلاق</button>
+      </div>
+
+      <div class="modalBody">
+        <div class="field">
+          <label>تاريخ الدفع</label>
+          <input id="payDate" type="date" />
+          <div class="help">التعليمات: اختار تاريخ الدفعة.</div>
+        </div>
+
+        <div class="field">
+          <label>المبلغ (جنيه)</label>
+          <input id="payAmount" type="number" min="0" step="0.01" placeholder="مثال: 200" />
+          <div class="help">التعليمات: اكتب قيمة الدفعة.</div>
+        </div>
+
+        <div class="field">
+          <label>ملاحظة (اختياري)</label>
+          <input id="payNote" type="text" placeholder="مثال: تحويل فودافون كاش" />
+          <div class="help">التعليمات: أي توضيح لطريقة الدفع أو سبب الدفعة.</div>
+        </div>
+
+        <button id="paySave" class="btn primary" type="button">حفظ الدفعة</button>
+        <div id="payError" class="error" hidden>من فضلك املأ تاريخ الدفع والمبلغ.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ✅ Modal: PIN Confirm (for delete) -->
+  <div id="pinConfirmModal" class="modal" hidden>
+    <div class="modalCard">
+      <div class="modalHead">
+        <h3>تأكيد الحذف</h3>
+        <button id="pinConfirmClose" class="btn small" type="button">إغلاق</button>
+      </div>
+
+      <div class="modalBody">
+        <div class="field">
+          <label>أدخل PIN (1234) لإتمام الحذف</label>
+          <input id="pinConfirmInput" type="password" inputmode="numeric" placeholder="PIN" />
+          <div class="help">التعليمات: لن يتم الحذف إلا بعد إدخال PIN الصحيح.</div>
+        </div>
+
+        <button id="pinConfirmOk" class="btn danger" type="button">تأكيد الحذف</button>
+        <div id="pinConfirmError" class="error" hidden>PIN غير صحيح.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ✅ Print Header (يظهر في الطباعة فقط) -->
+  <div id="printHeader" class="printHeaderBar" hidden>
+    <div class="phLeft">
+      <div class="phShop">سوبر ماركت أولاد يحيى</div>
+      <div class="phAdmin">إدارة هيثم</div>
+    </div>
+    <div class="phRight">
+      <div id="printHeaderTitle" class="phTitle">—</div>
+      <div id="printHeaderMeta" class="phMeta">—</div>
+    </div>
+  </div>
+
+  <!-- ✅ Loading Overlay (يظهر أثناء تحديث البيانات) -->
+  <div id="loadingOverlay" class="loadingOverlay" hidden>
+    <div class="loadingCard">
+      <div class="spinner"></div>
+      <div id="loadingOverlayText" class="loadingText">جارِ تحديث البيانات…</div>
+      <div class="loadingSub">من فضلك انتظر لحظات</div>
+    </div>
+  </div>
+
+  
+  <script>
+    // ✅ Google Login button (placeholder)
+    document.addEventListener("DOMContentLoaded", () => {
+      const btn = document.getElementById("googleLoginBtn");
+      if(!btn) return;
+      btn.addEventListener("click", () => {
+        alert("قريبًا: سيتم تفعيل تسجيل الدخول بجوجل بعد إعداد الـ Apps Script الجديد والـ Allowlist.");
+      });
+    });
+  </script>
+
+<script src="app.js"></script>
+</body>
+</html>
