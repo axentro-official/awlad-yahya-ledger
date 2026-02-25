@@ -303,82 +303,82 @@ function setupPinGate(){
     });
   }
 
-  if(pinForm && pinInput){
-    pinForm.addEventListener("submit", async (ev)=>{
-      ev.preventDefault();
-      hideGlobalError();
+  if(!(pinForm && pinInput)) return;
 
-      const v = (pinInput.value || "").trim();
+  pinForm.addEventListener("submit", async (ev)=>{
+    ev.preventDefault();
+    hideGlobalError();
 
-      const submitBtn = pinForm.querySelector('button[type="submit"]');
+    const v = (pinInput.value || "").trim();
+    const submitBtn = pinForm.querySelector('button[type="submit"]');
 
-await withButtonBusy_(submitBtn, "جاري التحقق...", async ()=>{
-  const isSheetsCfg = !!(API_CFG && API_CFG.scriptUrl);
+    await withButtonBusy_(submitBtn, "جاري التحقق...", async ()=>{
+      const isSheetsCfg = !!(API_CFG && API_CFG.scriptUrl);
 
-  // ✅ Sheets mode: validate PIN server-side (Apps Script)
-  if(isSheetsCfg){
-    showOverlay("جاري التحقق من الـ PIN...");
-    try{
-      // If PIN wrong -> WebApp returns BAD_PIN
-      await apiCall(API_ACTIONS.init, {}, { pin: v });
+      // ✅ Sheets mode: validate PIN server-side (Apps Script)
+      if(isSheetsCfg){
+        showOverlay("جاري التحقق من الـ PIN...");
+        try{
+          // If PIN wrong -> WebApp returns BAD_PIN
+          await apiCall(API_ACTIONS.init, {}, { pin: v });
 
-      // persist session PIN (only after success)
-      API_CFG.pin = v;
-      try{ sessionStorage.setItem("oy_pin", v); }catch(_){}
+          // persist session PIN (only after success)
+          if(API_CFG) API_CFG.pin = v;
+          try{ sessionStorage.setItem("oy_pin", v); }catch(_){}
 
-      setAuthed(true);
-      if(pinError) pinError.hidden = true;
-      pinInput.value = "";
-      pinInput.type = "password";
+          setAuthed(true);
+          if(pinError) pinError.hidden = true;
+          pinInput.value = "";
+          pinInput.type = "password";
 
-      openApp();
+          openApp();
 
-      try{ await STORE.init(); }
-      catch(e){
-        console.error(e);
-        showGlobalError("تعذر تهيئة التخزين على الشيت. سيتم استخدام التخزين المحلي مؤقتًا.");
+          try{ await STORE.init(); }
+          catch(e){
+            console.error(e);
+            showGlobalError("تعذر تهيئة التخزين على الشيت. سيتم استخدام التخزين المحلي مؤقتًا.");
+          }
+
+          await refresh(true);
+          return;
+        }catch(e){
+          console.error(e);
+          if(pinError) pinError.hidden = false;
+          pinInput.focus();
+          pinInput.select();
+          return;
+        }finally{
+          hideOverlay();
+        }
       }
 
-      await refresh(true);
-      return;
-    }catch(e){
-      console.error(e);
-      if(pinError) pinError.hidden = false;
-      pinInput.focus();
-      pinInput.select();
-      return;
-    }finally{
-      hideOverlay();
-    }
-  }
+      // ✅ Local mode: fallback PIN check (لا يوجد سيرفر)
+      if(v === PIN_CODE){
+        setAuthed(true);
+        if(pinError) pinError.hidden = true;
+        pinInput.value = "";
+        pinInput.type = "password";
 
-  // ✅ Local mode: fallback PIN check (لا يوجد سيرفر)
-  if(v === PIN_CODE){
-    setAuthed(true);
-    if(pinError) pinError.hidden = true;
-    pinInput.value = "";
-    pinInput.type = "password";
+        openApp();
 
-    openApp();
+        try{ await STORE.init(); }
+        catch(e){
+          console.error(e);
+          showGlobalError("تعذر تهيئة التخزين. سيتم استخدام التخزين المحلي.");
+        }
 
-    try{ await STORE.init(); }
-    catch(e){
-      console.error(e);
-      showGlobalError("تعذر تهيئة التخزين. سيتم استخدام التخزين المحلي.");
-    }
-
-    await refresh(true);
-  } else {
-    if(pinError) pinError.hidden = false;
-    pinInput.focus();
-    pinInput.select();
-  }
-});      }
+        await refresh(true);
+      } else {
+        if(pinError) pinError.hidden = false;
+        pinInput.focus();
+        pinInput.select();
+      }
     });
-  }
+  });
 }
 
 /* -------------------- ✅ PIN Confirm Modal (بديل prompt/alert) -------------------- */
+
 function pinConfirmModalOpen(actionText = "تنفيذ العملية"){
   return new Promise((resolve)=>{
     const modal = el("pinConfirmModal");
@@ -1889,6 +1889,8 @@ function hideOverlay(){
   const ov = document.getElementById("loadingOverlay");
   if(!ov) return;
   ov.hidden = true;
+}
+
 /* ===================== UX Helpers ===================== */
 async function withButtonBusy_(btn, busyText, fn){
   const hasBtn = !!btn;
@@ -1914,9 +1916,8 @@ function setFormDisabled_(form, disabled){
   els.forEach(el => { el.disabled = !!disabled; });
 }
 
-}
-
 /* ✅ ضمان إن الأوفرلاي ينتهي بعد آخر Render/Paint فعلي */
+
 function nextPaint(){
   return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
 }
@@ -2206,7 +2207,7 @@ try{
         });
 
         return;
-      }      }
+      }
 
       if(act === "pay"){ openPayModal(id); return; }
       if(act === "preview"){ openEntryPreview(id); return; }
