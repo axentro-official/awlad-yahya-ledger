@@ -46,6 +46,43 @@ window.AXENTRO_API = window.AXENTRO_API || {
 const TRASH_KEY = "oy_trash_v1";
 const MAX_TRASH = 1000;
 
+// ✅ Offline outbox (prevents divergence when connection flaps)
+// We keep local cache for fast UI, and an outbox of pending mutations to replay to Sheets.
+const OUTBOX_KEY = "oy_outbox_v1";
+const MAX_OUTBOX = 1000;
+
+function loadOutbox_(){
+  try{
+    const raw = localStorage.getItem(OUTBOX_KEY);
+    const data = raw ? JSON.parse(raw) : { ops: [] };
+    if(!Array.isArray(data.ops)) data.ops = [];
+    return data.ops;
+  }catch(_e){
+    return [];
+  }
+}
+
+function saveOutbox_(ops){
+  try{
+    const safe = (Array.isArray(ops) ? ops : []).slice(0, MAX_OUTBOX);
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify({ ops: safe }));
+  }catch(_e){}
+}
+
+function pushOutbox_(op){
+  const ops = loadOutbox_();
+  ops.unshift({ id: uid(), at: Date.now(), ...op });
+  saveOutbox_(ops);
+}
+
+function clearOutbox_(){
+  saveOutbox_([]);
+}
+
+function outboxCount_(){
+  return loadOutbox_().length;
+}
+
 const SHOP_NAME  = "سوبر ماركت أولاد يحيى";
 const ADMIN_NAME = "إدارة هيثم";
 
@@ -755,31 +792,92 @@ class HybridStore {
   constructor(){
     this.local = new LocalStore();
     this.sheets = new SheetsStore();
-    this.mode = (API_CFG?.scriptUrl) ? "sheets" : "local";
+    // ✅ Prefer Sheets when configured, but DO NOT permanently flip to local on transient failures.
+    this.preferred = (API_CFG?.scriptUrl) ? "sheets" : "local";
+    this.online = (this.preferred === "sheets");
+    this.mode = this.preferred; // kept for backward UI code; effective mode is derived below.
+  }
+
+  effectiveMode(){
+    return (this.preferred === "sheets" && this.online) ? "sheets" : "local";
+  }
+
+  setOffline_(note = ""){
+    this.online = false;
+    // keep mode as preferred for future retries; badge will use effectiveMode()
+    try{ this.offlineNote = String(note || ""); }catch(_e){ this.offlineNote = ""; }
+  }
+
+  setOnline_(){
+    this.online = true;
+    this.offlineNote = "";
+  }
+
+  async syncOutbox_(){
+    if(this.preferred !== "sheets") return true;
+    const ops = loadOutbox_();
+    if(!ops.length) return true;
+
+    // Process oldest -> newest to preserve user intent (reverse of unshift)
+    const ordered = [...ops].reverse();
+
+    for(const op of ordered){
+      if(!op || !op.op) continue;
+      const t = String(op.op);
+      const d = op.data || {};
+
+      if(t === "addEntry"){
+        await this.sheets.addEntry(d.entry);
+      }else if(t === "addPayment"){
+        await this.sheets.addPayment(d.payment);
+      }else if(t === "deleteEntry"){
+        await this.sheets.deleteEntry(d.entryId, d.snapshot);
+      }else if(t === "deletePayment"){
+        await this.sheets.deletePayment(d.payId, d.snapshot);
+      }else if(t === "deleteTrashLog"){
+        await this.sheets.deleteTrashLog(d.logId);
+      }else if(t === "restoreTrash"){
+        await this.sheets.restoreTrash(d.refTable, d.refId, d.snapshot);
+      }
+    }
+
+    // If all succeeded, clear outbox
+    clearOutbox_();
+    return true;
   }
 
   async init(){
     await this.local.init();
-    if(this.mode === "local") return true;
+    if(this.preferred === "local") return true;
 
     try{
       await this.sheets.init();
-      this.mode = "sheets";
+      this.setOnline_();
       return true;
     }catch(e){
       console.error(e);
-      this.mode = "local";
-      throw e;
+      this.setOffline_(e?.message || e);
+      // لا نرمي Exception هنا — هنسمح بالعمل Local + Outbox
+      return true;
     }
   }
 
   async getAll(){
-    if(this.mode === "local"){
+    if(this.preferred === "local"){
       return await this.local.getAll();
     }
 
     try{
+      // ✅ First: try syncing pending offline ops
+      try{
+        await this.syncOutbox_();
+      }catch(syncErr){
+        this.setOffline_(syncErr?.message || syncErr);
+        return await this.local.getAll();
+      }
+
       const all = await this.sheets.getAll();
+      this.setOnline_();
 
       const payments = (all.payments || []).map(p => ({
         ...p,
@@ -790,68 +888,77 @@ class HybridStore {
 
     }catch(e){
       console.error(e);
-      this.mode = "local";
+      this.setOffline_(e?.message || e);
       return await this.local.getAll();
     }
   }
 
   async addEntry(entry){
-    if(this.mode === "local"){
+    if(this.preferred === "local"){
       return await this.local.addEntry(entry);
     }
     try{
       await this.sheets.addEntry(entry);
+      this.setOnline_();
       await this.local.addEntry(entry);
     }catch(e){
       console.error(e);
-      this.mode = "local";
+      // ✅ Offline-safe: keep local + queue to outbox (no divergence on reconnect)
+      this.setOffline_(e?.message || e);
+      pushOutbox_({ op: "addEntry", data: { entry } });
       await this.local.addEntry(entry);
-      throw e;
+      return true;
     }
   }
 
   async addPayment(payment){
-    if(this.mode === "local"){
+    if(this.preferred === "local"){
       return await this.local.addPayment(payment);
     }
     try{
       await this.sheets.addPayment(payment);
+      this.setOnline_();
       await this.local.addPayment(payment);
     }catch(e){
       console.error(e);
-      this.mode = "local";
+      this.setOffline_(e?.message || e);
+      pushOutbox_({ op: "addPayment", data: { payment } });
       await this.local.addPayment(payment);
-      throw e;
+      return true;
     }
   }
 
   async deleteEntry(entryId, snapshot){
-    if(this.mode === "local"){
+    if(this.preferred === "local"){
       return await this.local.deleteEntry(entryId, snapshot);
     }
     try{
       await this.sheets.deleteEntry(entryId, snapshot);
+      this.setOnline_();
       await this.local.deleteEntry(entryId, snapshot);
     }catch(e){
       console.error(e);
-      this.mode = "local";
+      this.setOffline_(e?.message || e);
+      pushOutbox_({ op: "deleteEntry", data: { entryId, snapshot } });
       await this.local.deleteEntry(entryId, snapshot);
-      throw e;
+      return true;
     }
   }
 
   async deletePayment(payId, snapshot){
-    if(this.mode === "local"){
+    if(this.preferred === "local"){
       return await this.local.deletePayment(payId, snapshot);
     }
     try{
       await this.sheets.deletePayment(payId, snapshot);
+      this.setOnline_();
       await this.local.deletePayment(payId, snapshot);
     }catch(e){
       console.error(e);
-      this.mode = "local";
+      this.setOffline_(e?.message || e);
+      pushOutbox_({ op: "deletePayment", data: { payId, snapshot } });
       await this.local.deletePayment(payId, snapshot);
-      throw e;
+      return true;
     }
   }
 
@@ -861,29 +968,35 @@ class HybridStore {
   }
 
   async deleteTrashLog(logId){
-    if(this.mode === "local"){
+    if(this.preferred === "local"){
       return await this.local.deleteTrashLog(logId);
     }
     try{
       await this.sheets.deleteTrashLog(logId);
+      this.setOnline_();
       await this.local.deleteTrashLog(logId);
     }catch(e){
       console.error(e);
-      this.mode = "local";
+      this.setOffline_(e?.message || e);
+      pushOutbox_({ op: "deleteTrashLog", data: { logId } });
       await this.local.deleteTrashLog(logId);
-      throw e;
+      return true;
     }
   }
 
   async restoreTrash(refTable, refId, snapshot){
-    if(this.mode === "local"){
+    if(this.preferred !== "sheets"){
       throw new Error("UNSUPPORTED_LOCAL_RESTORE");
     }
     try{
-      return await this.sheets.restoreTrash(refTable, refId, snapshot);
+      const r = await this.sheets.restoreTrash(refTable, refId, snapshot);
+      this.setOnline_();
+      return r;
     }catch(e){
       console.error(e);
-      this.mode = "local";
+      this.setOffline_(e?.message || e);
+      // queue restore (best-effort) + throw so UI can fallback
+      pushOutbox_({ op: "restoreTrash", data: { refTable, refId, snapshot } });
       throw e;
     }
   }
@@ -1508,7 +1621,8 @@ async function restoreTrashLogById(logId){
 
   // Restore
   // ✅ لو شغال على Sheets: استخدم restoreTrash (Atomic) بدل إعادة إضافة صفوف متعددة
-  if(STORE && typeof STORE.restoreTrash === "function" && STORE.mode === "sheets"){
+  const eff = (STORE && STORE.effectiveMode) ? STORE.effectiveMode() : (STORE ? STORE.mode : "local");
+  if(STORE && typeof STORE.restoreTrash === "function" && eff === "sheets"){
     try{
       const refTable = (log.type === "delete_entry") ? "Transactions" : "Payments";
       const refId = String(log.refId || log.entrySnapshot?.id || log.paymentSnapshot?.id || "");
@@ -1988,7 +2102,11 @@ async function refresh(forceNetwork = false){
 
     // ✅ Badge
     ensureStoreBadge();
-    setStoreStatus(STORE.mode, "");
+    {
+      const pend = outboxCount_();
+      const note = pend ? (`معلّق: ${pend}`) : "";
+      setStoreStatus(STORE.effectiveMode ? STORE.effectiveMode() : STORE.mode, note);
+    }
 
     // ✅ اعرض المحلي الأول دائمًا (يمنع اختفاء الأرقام بعد Refresh)
     const local = await STORE.local.getAll();
@@ -2032,7 +2150,12 @@ async function refresh(forceNetwork = false){
     STATE.payments = (STATE.payments || []).map(p => ({...p, date: normalizeISODate(p.date)})).filter(p => !isRowDeleted(p));
 
     // ✅ Update badge
-    setStoreStatus(STORE.mode, "");
+    {
+      const pend = outboxCount_();
+      const note = (STORE.offlineNote ? String(STORE.offlineNote).slice(0, 80) : "");
+      const note2 = pend ? (note ? `${note} | معلّق: ${pend}` : `معلّق: ${pend}`) : note;
+      setStoreStatus(STORE.effectiveMode ? STORE.effectiveMode() : STORE.mode, note2);
+    }
 
     const after = {
       entries: fingerprintSlice(STATE.entries),
@@ -2067,7 +2190,7 @@ async function refresh(forceNetwork = false){
     }catch(_e){}
 
     const msg =
-      (STORE.mode === "local")
+      ((STORE.effectiveMode ? STORE.effectiveMode() : STORE.mode) === "local")
         ? "تعذر تحميل البيانات من الشيت. جاري استخدام التخزين المحلي مؤقتًا."
         : "حصلت مشكلة في تحميل البيانات. تأكد إن Web App شغال وبعدين اضغط إعادة المحاولة.";
     showGlobalError(msg);
@@ -2087,7 +2210,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     setupPinGate();
 
     ensureStoreBadge();
-    setStoreStatus(STORE.mode, "");
+    {
+      const pend = outboxCount_();
+      const note = pend ? (`معلّق: ${pend}`) : "";
+      setStoreStatus(STORE.effectiveMode ? STORE.effectiveMode() : STORE.mode, note);
+    }
 
     if(isAuthed()){
       document.documentElement.classList.add("authed");
