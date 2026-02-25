@@ -14,6 +14,18 @@
 const LS_KEY   = "oy_ledger_v3";
 const PIN_CODE = "1234";
 
+// ✅ Normalize PIN digits (supports Arabic-Indic & Eastern Arabic-Indic digits)
+function normalizePinInput(v){
+  const s = String(v ?? "").trim();
+  if(!s) return "";
+  const map = {
+    "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
+    "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
+  };
+  return s.replace(/[٠-٩۰-۹]/g, ch => map[ch] ?? ch);
+}
+
+
 // ✅ تجهيز مستقبلي: نجاح تسجيل دخول جوجل (سيتم ربطه لاحقًا بـ Apps Script Allowlist)
 function onGoogleLoginSuccess(email){
   try{
@@ -309,7 +321,7 @@ function setupPinGate(){
     ev.preventDefault();
     hideGlobalError();
 
-    const v = (pinInput.value || "").trim();
+    const v = normalizePinInput(pinInput.value);
     const submitBtn = pinForm.querySelector('button[type="submit"]');
 
     await withButtonBusy_(submitBtn, "جاري التحقق...", async ()=>{
@@ -426,7 +438,7 @@ function pinConfirmModalOpen(actionText = "تنفيذ العملية"){
     };
 
     const onOk = ()=>{
-      const v = (inp.value || "").trim();
+      const v = normalizePinInput(inp.value);
       if(v !== PIN_CODE){
         err.hidden = false;
         inp.focus();
@@ -552,7 +564,7 @@ async function apiCall(action, payload = {}, opts = {}){
   if(!API_CFG?.scriptUrl) throw new Error("NO_SCRIPT_URL");
 
   const url = String(API_CFG.scriptUrl || "").trim();
-  const pin = String((opts.pin ?? API_CFG.pin) || "").trim(); // ✅ PIN is provided by user at runtime
+  const pin = normalizePinInput(String((opts.pin ?? API_CFG.pin) || "").trim()); // ✅ PIN is provided by user at runtime
 
   const qs = new URLSearchParams();
   qs.set("action", action);
