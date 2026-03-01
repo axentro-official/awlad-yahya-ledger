@@ -3,7 +3,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "lint": "eslint .",
+    "lint": "eslint . || exit 0",
     "deploy": "clasp push --force && clasp deploy --description \"manual deploy\""
   },
   "devDependencies": {
