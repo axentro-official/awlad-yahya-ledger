@@ -1,3 +1,4 @@
+powershell -NoProfile -Command @'
 name: CI (Lint + Apps Script Deploy)
 
 on:
@@ -35,15 +36,15 @@ jobs:
       # Ensure appsscript.json exists (required by clasp)
       - name: Ensure appsscript.json exists
         if: github.event_name == 'push'
+        shell: bash
         run: |
           if [ ! -f appsscript.json ]; then
-            cat > appsscript.json <<'JSON'
-{
-  "timeZone": "Africa/Cairo",
-  "exceptionLogging": "STACKDRIVER",
-  "runtimeVersion": "V8"
-}
-JSON
+            printf '%s\n' \
+              '{' \
+              '  "timeZone": "Africa/Cairo",' \
+              '  "exceptionLogging": "STACKDRIVER",' \
+              '  "runtimeVersion": "V8"' \
+              '}' > appsscript.json
             echo "Created appsscript.json"
           else
             echo "appsscript.json already exists"
@@ -54,17 +55,19 @@ JSON
         if: github.event_name == 'push'
         env:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        shell: bash
         run: |
           if [ -z "$CLASPRC_JSON" ]; then
             echo "Missing secret: CLASPRC_JSON"
             exit 1
           fi
-          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          echo "$CLASPRC_JSON" > ~/.clasprc.json
 
       - name: Configure Script ID
         if: github.event_name == 'push'
         env:
           SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        shell: bash
         run: |
           if [ -z "$SCRIPT_ID" ]; then
             echo "Missing secret: SCRIPT_ID"
@@ -79,3 +82,4 @@ JSON
       - name: Create deployment
         if: github.event_name == 'push'
         run: npx clasp deploy --description "GitHub Actions run $GITHUB_RUN_NUMBER ($GITHUB_SHA)"
+'@ | Set-Content -Path .github/workflows/ci.yml -Encoding utf8
