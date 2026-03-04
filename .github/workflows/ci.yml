@@ -1,9 +1,9 @@
-powershell -NoProfile -Command @'
+powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path .github\workflows | Out-Null; Set-Content -Path .github\workflows\ci.yml -Encoding UTF8 -Value @'
 name: CI (Lint + Apps Script Deploy)
 
 on:
   push:
-    branches: ["main", "master"]
+    branches: [""main"", ""master""]
   pull_request:
 
 concurrency:
@@ -22,58 +22,38 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: ""20""
+          cache: ""npm""
 
       - name: Install dependencies
         run: npm ci
 
-      # Lint should NOT fail the pipeline
       - name: Lint (non-blocking)
         run: npm run lint
         continue-on-error: true
-
-      # Ensure appsscript.json exists (required by clasp)
-      - name: Ensure appsscript.json exists
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          if [ ! -f appsscript.json ]; then
-            printf '%s\n' \
-              '{' \
-              '  "timeZone": "Africa/Cairo",' \
-              '  "exceptionLogging": "STACKDRIVER",' \
-              '  "runtimeVersion": "V8"' \
-              '}' > appsscript.json
-            echo "Created appsscript.json"
-          else
-            echo "appsscript.json already exists"
-          fi
 
       # Deploy only on direct pushes (not on PRs)
       - name: Configure clasp credentials
         if: github.event_name == 'push'
         env:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
-        shell: bash
         run: |
-          if [ -z "$CLASPRC_JSON" ]; then
-            echo "Missing secret: CLASPRC_JSON"
+          if [ -z ""$CLASPRC_JSON"" ]; then
+            echo ""Missing secret: CLASPRC_JSON""
             exit 1
           fi
-          echo "$CLASPRC_JSON" > ~/.clasprc.json
+          echo ""$CLASPRC_JSON"" > ~/.clasprc.json
 
       - name: Configure Script ID
         if: github.event_name == 'push'
         env:
           SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
-        shell: bash
         run: |
-          if [ -z "$SCRIPT_ID" ]; then
-            echo "Missing secret: SCRIPT_ID"
+          if [ -z ""$SCRIPT_ID"" ]; then
+            echo ""Missing secret: SCRIPT_ID""
             exit 1
           fi
-          printf '{\n  "scriptId": "%s",\n  "rootDir": "."\n}\n' "$SCRIPT_ID" > .clasp.json
+          printf '{\n  ""scriptId"": ""%s"",\n  ""rootDir"": "".""\n}\n' ""$SCRIPT_ID"" > .clasp.json
 
       - name: Push to Apps Script
         if: github.event_name == 'push'
@@ -81,5 +61,5 @@ jobs:
 
       - name: Create deployment
         if: github.event_name == 'push'
-        run: npx clasp deploy --description "GitHub Actions run $GITHUB_RUN_NUMBER ($GITHUB_SHA)"
-'@ | Set-Content -Path .github/workflows/ci.yml -Encoding utf8
+        run: npx clasp deploy --description ""GitHub Actions run $GITHUB_RUN_NUMBER ($GITHUB_SHA)""
+'@"
