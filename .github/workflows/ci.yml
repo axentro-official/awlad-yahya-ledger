@@ -38,12 +38,12 @@ jobs:
         run: |
           if [ ! -f appsscript.json ]; then
             cat > appsscript.json <<'JSON'
-          {
-            "timeZone": "Africa/Cairo",
-            "exceptionLogging": "STACKDRIVER",
-            "runtimeVersion": "V8"
-          }
-          JSON
+{
+  "timeZone": "Africa/Cairo",
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8"
+}
+JSON
             echo "Created appsscript.json"
           else
             echo "appsscript.json already exists"
@@ -59,7 +59,7 @@ jobs:
             echo "Missing secret: CLASPRC_JSON"
             exit 1
           fi
-          echo "$CLASPRC_JSON" > ~/.clasprc.json
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
 
       - name: Configure Script ID
         if: github.event_name == 'push'
