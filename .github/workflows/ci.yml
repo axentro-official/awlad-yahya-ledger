@@ -27,11 +27,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Lint should NOT fail the pipeline
       - name: Lint (non-blocking)
         run: npm run lint
         continue-on-error: true
 
-      # Deploy only on direct pushes to main/master (not on PRs)
+      # Ensure appsscript.json exists (required by clasp)
+      - name: Ensure appsscript.json exists
+        if: github.event_name == 'push'
+        run: |
+          if [ ! -f appsscript.json ]; then
+            cat > appsscript.json <<'JSON'
+          {
+            "timeZone": "Africa/Cairo",
+            "exceptionLogging": "STACKDRIVER",
+            "runtimeVersion": "V8"
+          }
+          JSON
+            echo "Created appsscript.json"
+          else
+            echo "appsscript.json already exists"
+          fi
+
+      # Deploy only on direct pushes (not on PRs)
       - name: Configure clasp credentials
         if: github.event_name == 'push'
         env:
@@ -41,7 +59,6 @@ jobs:
             echo "Missing secret: CLASPRC_JSON"
             exit 1
           fi
-          mkdir -p ~/.config
           echo "$CLASPRC_JSON" > ~/.clasprc.json
 
       - name: Configure Script ID
