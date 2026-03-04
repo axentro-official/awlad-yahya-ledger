@@ -700,22 +700,36 @@ class LocalStore {
     all.payments.push(payment);
     await this.setAll(all.entries, all.payments, all.trash);
   }
-  async deleteEntry(entryId, snapshot){
+  async deleteEntry(entryId, snapshot, trashId){
     const all = await this.getAll();
     all.entries = all.entries.filter(e => e.id !== entryId);
     all.payments = all.payments.filter(p => p.entryId !== entryId);
 
     const logs = (all.trash || []);
-    logs.unshift({ id: uid(), at: Date.now(), type:"delete_entry", ...snapshot });
+    logs.unshift({
+      id: String(trashId || uid()),
+      refTable: "Transactions",
+      refId: entryId,
+      deletedAt: Date.now(),
+      reason: "delete_entry",
+      snapshotJson: JSON.stringify(snapshot || {})
+    });
 
     await this.setAll(all.entries, all.payments, logs);
   }
-  async deletePayment(payId, snapshot){
+  async deletePayment(payId, snapshot, trashId){
     const all = await this.getAll();
     all.payments = all.payments.filter(p => p.id !== payId);
 
     const logs = (all.trash || []);
-    logs.unshift({ id: uid(), at: Date.now(), type:"delete_payment", ...snapshot });
+    logs.unshift({
+      id: String(trashId || uid()),
+      refTable: "Payments",
+      refId: payId,
+      deletedAt: Date.now(),
+      reason: "delete_payment",
+      snapshotJson: JSON.stringify(snapshot || {})
+    });
 
     await this.setAll(all.entries, all.payments, logs);
   }
@@ -746,13 +760,19 @@ class SheetsStore {
   }
   async addEntry(entry){ await apiCall(API_ACTIONS.addEntry, { entry }); }
   async addPayment(payment){ await apiCall(API_ACTIONS.addPayment, { payment }); }
-  async deleteEntry(entryId, snapshot){ await apiCall(API_ACTIONS.deleteEntry, { entryId, snapshot }); }
-  async deletePayment(payId, snapshot){ await apiCall(API_ACTIONS.deletePayment, { payId, snapshot }); }
+  async deleteEntry(entryId, snapshot){
+    // server returns { ok:true, trashId }
+    return await apiCall(API_ACTIONS.deleteEntry, { entryId, snapshot });
+  }
+  async deletePayment(payId, snapshot){
+    // server returns { ok:true, trashId }
+    return await apiCall(API_ACTIONS.deletePayment, { payId, snapshot });
+  }
   async getTrash(){
     const j = await apiCall(API_ACTIONS.getTrash, {});
     return Array.isArray(j.trash) ? j.trash : [];
   }
-  async deleteTrashLog(logId){ await apiCall(API_ACTIONS.deleteTrashLog, { logId }); }
+  async deleteTrashLog(logId){ return await apiCall(API_ACTIONS.deleteTrashLog, { logId }); }
   async restoreTrash(refTable, refId, snapshot){
     const j = await apiCall(API_ACTIONS.restoreTrash, { refTable, refId, snapshot });
     return j;
@@ -906,9 +926,10 @@ class HybridStore {
       return await this.local.deleteEntry(entryId, snapshot);
     }
     try{
-      await this.sheets.deleteEntry(entryId, snapshot);
+      const res = await this.sheets.deleteEntry(entryId, snapshot);
       this.setOnline_();
-      await this.local.deleteEntry(entryId, snapshot);
+      await this.local.deleteEntry(entryId, snapshot, res && res.trashId);
+      return res;
     }catch(e){
       console.error(e);
       this.setOffline_(e?.message || e);
@@ -923,9 +944,10 @@ class HybridStore {
       return await this.local.deletePayment(payId, snapshot);
     }
     try{
-      await this.sheets.deletePayment(payId, snapshot);
+      const res = await this.sheets.deletePayment(payId, snapshot);
       this.setOnline_();
-      await this.local.deletePayment(payId, snapshot);
+      await this.local.deletePayment(payId, snapshot, res && res.trashId);
+      return res;
     }catch(e){
       console.error(e);
       this.setOffline_(e?.message || e);
@@ -2160,9 +2182,18 @@ document.addEventListener("DOMContentLoaded", async () => {
             STATE.entries = STATE.entries.filter(e => e.id !== id);
             STATE.payments = STATE.payments.filter(p => p.entryId !== id);
 
-            // add trash log locally
+            // add trash log locally using server-like schema (so permanent delete works against Sheets)
+            const tempTrashId = uid();
+            const snapshot = { entrySnapshot: entry, paymentsSnapshot: pays };
             STATE.trash = normalizeTrash([
-              { id: uid(), at: Date.now(), type:"delete_entry", entrySnapshot: entry, paymentsSnapshot: pays },
+              {
+                id: tempTrashId,
+                refTable: "Transactions",
+                refId: id,
+                deletedAt: Date.now(),
+                reason: "delete_entry",
+                snapshotJson: JSON.stringify(snapshot || {})
+              },
               ...(STATE.trash || [])
             ]);
 
@@ -2170,7 +2201,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             requestRender();
 
             try{
-              await STORE.deleteEntry(id, { entrySnapshot: entry, paymentsSnapshot: pays });
+              const res = await STORE.deleteEntry(id, { entrySnapshot: entry, paymentsSnapshot: pays });
+              if(res && res.trashId){
+                // Replace temp id with actual trash row id from Sheets
+                STATE.trash = (STATE.trash || []).map(t => (t.id === tempTrashId ? { ...t, id: String(res.trashId) } : t));
+                requestRender();
+              }
             }catch(e){
               console.error(e);
               showGlobalError("تعذر الحذف على الشيت الآن. تم تنفيذ الحذف محليًا وسيتم إرسال العملية عند عودة الاتصال.");
@@ -2282,17 +2318,32 @@ document.addEventListener("DOMContentLoaded", async () => {
         if(confirm("متأكد حذف الدفعة؟")){
           const pay = STATE.payments.find(p => p.id === payId) || null;
 
-          // optimistic remove + trash log
+          // optimistic remove + trash log using server-like schema (so permanent delete works against Sheets)
           STATE.payments = STATE.payments.filter(p => p.id !== payId);
+          const tempTrashId = uid();
+          const snapshot = { paymentSnapshot: pay };
           STATE.trash = normalizeTrash([
-            { id: uid(), at: Date.now(), type:"delete_payment", paymentSnapshot: pay },
+            {
+              id: tempTrashId,
+              refTable: "Payments",
+              refId: payId,
+              deletedAt: Date.now(),
+              reason: "delete_payment",
+              snapshotJson: JSON.stringify(snapshot || {})
+            },
             ...(STATE.trash || [])
           ]);
 
           normalizeStateInPlace_();
           requestRender();
 
-          try{ await STORE.deletePayment(payId, { paymentSnapshot: pay }); }
+          try{
+            const res = await STORE.deletePayment(payId, { paymentSnapshot: pay });
+            if(res && res.trashId){
+              STATE.trash = (STATE.trash || []).map(t => (t.id === tempTrashId ? { ...t, id: String(res.trashId) } : t));
+              requestRender();
+            }
+          }
           catch(e){
             console.error(e);
             showGlobalError("تعذر حذف الدفعة على الشيت الآن. تم تنفيذ الحذف محليًا وسيتم إرسال العملية عند عودة الاتصال.");
